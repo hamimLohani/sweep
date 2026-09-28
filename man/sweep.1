@@ -25,6 +25,13 @@
 .Op Fl -include-low-confidence
 .Op Fl -json
 .Nm
+.Cm remove
+.Cm cache
+.Op Ar app | all
+.Op Fl -dry-run
+.Op Fl y | -yes
+.Op Fl -json
+.Nm
 .Cm doctor
 .Sh DESCRIPTION
 .Nm
@@ -74,22 +81,28 @@ and scans all standard user and system library domains for leftovers.
 Displays items grouped by location along with byte sizes, confidence
 levels, and matching rationale.
 .Sy This subcommand deletes nothing.
-.It Cm remove Op cache Op Ar app Op flags
-When invoked with
-.Qq cache
-(e.g.,
-.Cm sweep remove cache
-or
-.Cm sweep remove cache Ar Safari ) ,
-scans and purges application cache directories (including
+.It Cm remove Ar app Op Fl -dry-run Op Fl y | -yes Op Fl -permanent Op Fl -include-low-confidence Op Fl -json
+Resolves the target application, discovers associated leftover files and background services, prompts the user with an interactive numbered checklist, unloads related LaunchAgents or LaunchDaemons with
+.Xr launchctl 1 ,
+and safely moves selected items to the macOS Trash (preserving native Finder recovery). If
+.Fl -permanent
+is specified, items are permanently unlinked instead.
+.It Cm remove Cm cache Op Ar app | all Op Fl -dry-run Op Fl y | -yes Op Fl -json
+Scans and purges application cache directories (including
 .Pa ~/Library/Caches ,
-Darwin system user caches, and sandbox container caches) while preserving the application binary, user preferences, and documents.
+Darwin system user caches in
+.Pa /private/var/folders ,
+WebKit caches, and sandbox container caches) while preserving the application binary, user preferences, and documents.
+If an application name is provided (e.g.,
+.Ar Safari
+or
+.Ar Zoom ) ,
+only that application's caches are cleaned. If omitted or specified as
+.Ar all ,
+caches across all installed applications are cleaned.
 Core system applications (such as Safari and Finder) are permitted for cache purging.
 All cache deletions require administrator authentication
 .Pq Xr sudo 8 .
-When invoked with an application name directly, performs a complete uninstallation, unloads related LaunchAgents or LaunchDaemons with
-.Xr launchctl 1 ,
-and safely moves selected items to the macOS Trash.
 .It Cm doctor
 Runs diagnostic checks verifying Full Disk Access (FDA), macOS version
 compatibility (macOS 13.0+ required), User Trash permissions, System
@@ -200,6 +213,14 @@ Perform a safe trial run showing exactly what file paths would be deleted:
 Interactively review and uninstall an application:
 .Pp
 .Dl $ sweep remove "Slack"
+.Pp
+Clean cache files for a specific application (including core system apps like Safari):
+.Pp
+.Dl $ sweep remove cache "Safari"
+.Pp
+Clean caches across all installed applications:
+.Pp
+.Dl $ sweep remove cache all
 .Pp
 Check system permissions and Full Disk Access:
 .Pp

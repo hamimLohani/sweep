@@ -5,7 +5,16 @@ import SweepCore
 struct RemoveCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "remove",
-        abstract: "Scan and safely remove an application and its leftovers."
+        abstract: "Scan and safely remove an application and its leftovers, or clean caches via 'remove cache'.",
+        discussion: """
+        Uninstalls an application bundle along with its leftover preferences,
+        caches, sandboxed containers, and background helper services.
+
+        CACHE CLEANING:
+          sweep remove cache <app>      Clean cache locations for an application (e.g. Safari)
+          sweep remove cache all        Clean cache locations for all installed applications
+          sweep remove <app> --cache    Flag syntax to clean application cache
+        """
     )
 
     @Argument(help: "Application name, path to .app, bundle identifier, or 'cache' to clean application caches.")
@@ -126,8 +135,10 @@ struct RemoveCommand: ParsableCommand {
             let requiresPrivilege = !privilegeHandler.canWrite(to: app.bundleURL) ||
                 selectedLeftovers.contains(where: { $0.requiresPrivilege || !privilegeHandler.canWrite(to: $0.url) })
             if requiresPrivilege && !privilegeHandler.isRoot {
-                print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required for this uninstallation.", .boldYellow))
-                print(Terminal.dim("Please enter your password if prompted by macOS.\n"))
+                if !privilegeHandler.hasCachedSudo() {
+                    print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required for this uninstallation.", .boldYellow))
+                    print(Terminal.dim("Please enter your password if prompted by macOS.\n"))
+                }
                 try privilegeHandler.authenticateIfNeeded()
             }
         }
@@ -218,8 +229,10 @@ struct RemoveCommand: ParsableCommand {
 
         // Mandatory administrator privilege authentication as requested
         if !dryRun {
-            print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required to clean application caches.", .boldYellow))
-            print(Terminal.dim("Please enter your administrator password if prompted by macOS.\n"))
+            if !PrivilegeHandler.shared.hasCachedSudo() {
+                print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required to clean application caches.", .boldYellow))
+                print(Terminal.dim("Please enter your administrator password if prompted by macOS.\n"))
+            }
             try PrivilegeHandler.shared.authenticateIfNeeded()
         }
 
@@ -298,8 +311,10 @@ struct RemoveCommand: ParsableCommand {
 
         // Mandatory administrator privilege authentication as requested
         if !dryRun {
-            print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required to clean application caches.", .boldYellow))
-            print(Terminal.dim("Please enter your administrator password if prompted by macOS.\n"))
+            if !PrivilegeHandler.shared.hasCachedSudo() {
+                print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required to clean application caches.", .boldYellow))
+                print(Terminal.dim("Please enter your administrator password if prompted by macOS.\n"))
+            }
             try PrivilegeHandler.shared.authenticateIfNeeded()
         }
 

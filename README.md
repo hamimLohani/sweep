@@ -140,6 +140,8 @@ Enter choice:
 | `sweep list` | Shows all installed apps and disk sizes | `sweep list` |
 | `sweep scan <app>` | Discovers all leftovers (deletes nothing) | `sweep scan "Discord"` |
 | `sweep remove <app>` | Interactive uninstaller with checklist | `sweep remove "Discord"` |
+| `sweep remove cache [app]` | Purges app caches while preserving settings | `sweep remove cache "Safari"` |
+| `sweep remove cache all` | Purges caches across all installed applications | `sweep remove cache all` |
 | `sweep doctor` | Diagnoses permissions and system compatibility | `sweep doctor` |
 | `sweep --help` | Shows help instructions | `sweep --help` |
 | `sweep --version` | Displays installed version | `sweep --version` |
@@ -151,6 +153,7 @@ Enter choice:
 - **`-y`, `--yes`**: Skip confirmation prompts (ideal for scripts and fast uninstalls).
 - **`--include-low-confidence`**: Also include shared vendor folders (e.g. `~/Library/Application Support/Google`).
 - **`--permanent`**: Permanently deletes files immediately instead of moving them to Trash (use with caution).
+- **`--cache`**: Clean caches only, preserving the application binary and preferences.
 - **`--json`**: Output the removal transaction record as clean JSON.
 
 ---
@@ -180,6 +183,9 @@ Yes! `sweep scan` and `sweep remove` accept:
 - Application name: `sweep remove "Visual Studio Code"`
 - Bundle ID: `sweep remove com.microsoft.VSCode`
 - Direct path: `sweep remove /Applications/Visual\ Studio\ Code.app`
+
+### Can I safely clean caches for system apps like Safari?
+**Yes.** While `sweep` strictly prevents uninstalling sealed system apps (like Safari or Finder), you can safely clean their caches using `sweep remove cache "Safari"` or `sweep remove cache all`. This purges temporary WebKit data and Darwin user caches while leaving your bookmarks, browsing history, and preferences completely intact.
 
 ---
 
