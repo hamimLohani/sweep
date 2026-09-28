@@ -129,15 +129,13 @@ struct RemoveCommand: ParsableCommand {
             }
         }
 
-        // 7. Check for administrator privileges if any targets are protected or non-writable
+        // 7. Mandatory administrator privilege authentication for application removal
         if !dryRun {
             let privilegeHandler = PrivilegeHandler.shared
-            let requiresPrivilege = !privilegeHandler.canWrite(to: app.bundleURL) ||
-                selectedLeftovers.contains(where: { $0.requiresPrivilege || !privilegeHandler.canWrite(to: $0.url) })
-            if requiresPrivilege && !privilegeHandler.isRoot {
+            if !privilegeHandler.isRoot {
                 if !privilegeHandler.hasCachedSudo() {
                     print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required for this uninstallation.", .boldYellow))
-                    print(Terminal.dim("Please enter your password if prompted by macOS.\n"))
+                    print(Terminal.dim("Please enter your administrator password if prompted by macOS.\n"))
                 }
                 try privilegeHandler.authenticateIfNeeded()
             }
