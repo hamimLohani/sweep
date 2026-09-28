@@ -71,11 +71,20 @@ struct ScanCommand: ParsableCommand {
         }
 
         print(Terminal.dim("\n💡 This was a scan only. No files were modified or deleted."))
+
+        let cacheInfo = CacheScanner().scanCache(for: app)
+        let cacheSizeBytes = cacheInfo.totalSizeBytes
+
         if app.isSystemApp || SafetyGuard.isProtectedSystemApp(bundleIdentifier: app.bundleIdentifier, bundleURL: app.bundleURL) {
             print(Terminal.colorize("   '\(app.displayName)' is a core macOS system application and cannot be uninstalled.", .yellow))
-            print(Terminal.dim("   To clean its temporary caches safely, run:") + " " + Terminal.bold("sweep remove cache \"\(app.displayName)\""))
+            if cacheSizeBytes > 0 {
+                print(Terminal.dim("   To clean its cache (") + Terminal.colorize(Terminal.formatBytes(cacheSizeBytes), .cyan) + Terminal.dim("), run:             ") + Terminal.bold("sweep remove cache \"\(target)\""))
+            }
         } else {
-            print(Terminal.dim("   To remove this application and its leftovers, run:") + " " + Terminal.bold("sweep remove \"\(target)\""))
+            print(Terminal.dim("   To remove this application and its leftovers, run: ") + Terminal.bold("sweep remove \"\(target)\""))
+            if cacheSizeBytes > 0 {
+                print(Terminal.dim("   To clean only its cache (") + Terminal.colorize(Terminal.formatBytes(cacheSizeBytes), .cyan) + Terminal.dim("), run:            ") + Terminal.bold("sweep remove cache \"\(target)\""))
+            }
         }
     }
 }
