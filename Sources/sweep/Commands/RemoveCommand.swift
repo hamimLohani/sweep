@@ -31,9 +31,9 @@ struct RemoveCommand: ParsableCommand {
         let resolver = AppResolver()
         let app = try resolver.resolve(target: target)
 
-        // Safety check: protect Apple system applications
-        if app.isSystemApp || app.bundleIdentifier.lowercased().hasPrefix("com.apple.") {
-            throw SweepError.protectedSystemComponent("Target '\(app.bundleName)' (\(app.bundleIdentifier)) is an Apple system-protected application.")
+        // Safety check: protect sealed core Apple system applications
+        if app.isSystemApp || SafetyGuard.isProtectedSystemApp(bundleIdentifier: app.bundleIdentifier, bundleURL: app.bundleURL) {
+            throw SweepError.protectedSystemComponent("Target '\(app.bundleName)' (\(app.bundleIdentifier)) is a sealed macOS system-protected application.")
         }
 
         // 2. Check if application is currently running
@@ -97,7 +97,19 @@ struct RemoveCommand: ParsableCommand {
             }
         }
 
-        // 7. Execute TrashRemover (prints each file path before deleting)
+        // 7. Check for administrator privileges if any targets are protected or non-writable
+        if !dryRun {
+            let privilegeHandler = PrivilegeHandler.shared
+            let requiresPrivilege = !privilegeHandler.canWrite(to: app.bundleURL) ||
+                selectedLeftovers.contains(where: { $0.requiresPrivilege || !privilegeHandler.canWrite(to: $0.url) })
+            if requiresPrivilege && !privilegeHandler.isRoot {
+                print(Terminal.colorize("\n🔒 Administrator privileges (sudo) required for this uninstallation.", .boldYellow))
+                print(Terminal.dim("Please enter your password if prompted by macOS.\n"))
+                try privilegeHandler.authenticateIfNeeded()
+            }
+        }
+
+        // 8. Execute TrashRemover (prints each file path before deleting)
         let remover = TrashRemover()
         let result = try remover.execute(plan: plan) { url, category in
             let actionPrefix = dryRun ? "[WOULD REMOVE]" : (permanent ? "[DELETING]" : "[TRASHING]")

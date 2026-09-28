@@ -9,7 +9,7 @@ public struct SweepCommand: ParsableCommand {
         Finds and safely removes applications along with their hidden leftover
         preferences, caches, application support files, launch agents, and helpers.
         """,
-        version: "sweep 1.0.1",
+        version: "sweep 1.0.2",
         subcommands: [
             ListCommand.self,
             ScanCommand.self,

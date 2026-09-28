@@ -20,9 +20,9 @@ public final class LeftoverScanner {
 
     /// Scans for all leftover files associated with the specified application
     public func scan(appInfo: AppInfo) throws -> ScanResult {
-        // Enforce safety: Refuse to scan Apple system-protected components
-        if appInfo.isSystemApp || appInfo.bundleIdentifier.lowercased().hasPrefix("com.apple.") {
-            throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is an Apple system-protected application.")
+        // Enforce safety: Refuse to scan sealed core Apple system-protected components
+        if appInfo.isSystemApp || SafetyGuard.isProtectedSystemApp(bundleIdentifier: appInfo.bundleIdentifier, bundleURL: appInfo.bundleURL) {
+            throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
         }
 
         var detectedItems: [LeftoverItem] = []

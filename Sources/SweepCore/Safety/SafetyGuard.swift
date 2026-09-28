@@ -20,6 +20,7 @@ public final class SafetyGuard {
         "/private/var/db",
         "/private/var/root",
         "/Library/Apple",
+        "/Library/Application Support/Apple",
         "/Library/SystemExtensions",
         "/Library/Keychains",
         "/System/Library",
@@ -34,7 +35,8 @@ public final class SafetyGuard {
         "Library/Accounts",
         "Library/Mail",
         "Library/Messages",
-        "Library/Safari"
+        "Library/Safari",
+        "Library/Application Support/Apple"
     ]
 
     /// Structural directory roots that can NEVER be deleted itself as a leftover
@@ -57,6 +59,35 @@ public final class SafetyGuard {
         "Applications"
     ]
 
+    /// Apple essential core system apps that can NEVER be deleted
+    public static let coreSystemAppBundles: Set<String> = [
+        "com.apple.finder",
+        "com.apple.safari",
+        "com.apple.systempreferences",
+        "com.apple.settings",
+        "com.apple.terminal",
+        "com.apple.appstore",
+        "com.apple.launchd"
+    ]
+
+    /// Checks if an app is a sealed core macOS system application
+    public static func isProtectedSystemApp(bundleIdentifier: String, bundleURL: URL) -> Bool {
+        let bundleID = bundleIdentifier.lowercased()
+        let path = bundleURL.resolvingSymlinksInPath().standardized.path
+
+        // Sealed read-only APFS volume: /System, /System/Applications
+        if path.hasPrefix("/System/") || path.hasPrefix("/System/Applications") || path.hasPrefix("/System/Volumes/Data/System/") {
+            return true
+        }
+
+        // Essential core system application
+        if coreSystemAppBundles.contains(bundleID) {
+            return true
+        }
+
+        return false
+    }
+
     /// Validates an item path against all safety rules. Throws `SweepError` if unsafe.
     public func validate(itemURL: URL, for appInfo: AppInfo? = nil) throws {
         let rawPath = itemURL.standardized.path
@@ -66,10 +97,10 @@ public final class SafetyGuard {
             throw SweepError.protectedSystemComponent("Path is empty or root filesystem.")
         }
 
-        // Check 2: Apple system bundle protection
+        // Check 2: Core macOS system bundle protection
         if let appInfo = appInfo {
-            if appInfo.bundleIdentifier.lowercased().hasPrefix("com.apple.") || appInfo.isSystemApp {
-                throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' is an Apple protected system application.")
+            if Self.isProtectedSystemApp(bundleIdentifier: appInfo.bundleIdentifier, bundleURL: appInfo.bundleURL) {
+                throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
             }
         }
 

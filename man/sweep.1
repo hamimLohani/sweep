@@ -137,11 +137,12 @@ and
 .Pa ~/Library/IdentityServices
 are unconditionally excluded from scanning and deletion.
 .It Sy Apple System Application Shield
-Applications with bundle identifiers beginning with
-.Qq com.apple.
-or bundles installed inside
+Applications installed inside sealed system volumes (such as
 .Pa /System/Applications
-cannot be removed.
+or core components like Finder and Safari) cannot be removed.
+Removable user-facing Apple applications in
+.Pa /Applications
+may be uninstalled with administrator authorization.
 .It Sy Symlink Canonicalization
 All paths are resolved to their canonical targets using symlink
 resolution before validation.

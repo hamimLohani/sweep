@@ -145,7 +145,7 @@ Your system's safety and data integrity are the #1 priority:
 
 - **Move to Trash by Default**: Files go to `~/.Trash`, meaning you can open Trash and click **"Put Back"** at any time.
 - **Zero-Touch on Passwords & Keychains**: `sweep` strictly blocks all keychain directories (`~/Library/Keychains`) and authentication services. It will never touch your logins, credentials, or passkeys.
-- **Apple Protected Apps Shield**: `sweep` refuses to touch macOS system applications (`com.apple.*`) or protected system directories (`/System`, `/usr`, `/bin`, `/sbin`).
+- **Apple System Integrity Shield**: `sweep` refuses to touch sealed macOS system components (Finder, Safari, System Settings in `/System/`) and system roots (`/System`, `/usr`, `/bin`, `/sbin`). Removable productivity apps (such as Pages or Keynote) can be safely uninstalled, prompting for administrator privileges (`sudo`) when system-level ownership is involved.
 - **Anti-Traversal Protection**: All paths are resolved before action; symlinks attempting to trick the tool into escaping to system files are immediately rejected.
 - **Audit History**: Every uninstall logs an atomic receipt to `~/.config/sweep/history.json` with original paths and trash locations.
 

@@ -124,7 +124,7 @@ public final class AppResolver {
         let version = plist["CFBundleShortVersionString"] as? String ?? plist["CFBundleVersion"] as? String
 
         let vendor = extractVendorToken(from: bundleIdentifier)
-        let isSystem = bundleURL.path.hasPrefix("/System/") || bundleIdentifier.hasPrefix("com.apple.")
+        let isSystem = SafetyGuard.isProtectedSystemApp(bundleIdentifier: bundleIdentifier, bundleURL: bundleURL)
         let size = isSystem ? 0 : calculateSize(of: bundleURL)
 
         let packages = (includeReceipts && !isSystem) ? receiptReader.findPackages(matching: bundleIdentifier, appName: bundleName) : []
@@ -152,7 +152,7 @@ public final class AppResolver {
 
     /// Extracts vendor token from reverse-DNS bundle identifier (e.g. com.tinyspeck.slackmacgap -> tinyspeck).
     public func extractVendorToken(from bundleID: String) -> String? {
-        let genericPrefixes: Set<String> = ["com", "org", "net", "io", "co", "app", "dev", "mac", "me", "us", "uk", "de", "fr"]
+        let genericPrefixes: Set<String> = ["com", "org", "net", "io", "co", "app", "dev", "mac", "me", "us", "uk", "de", "fr", "apple"]
         let parts = bundleID.split(separator: ".").map(String.init)
         guard parts.count >= 2 else { return nil }
 

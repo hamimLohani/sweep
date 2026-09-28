@@ -111,7 +111,7 @@ public final class TrashRemover {
             var errorDetails: String?
 
             do {
-                if target.requiresPrivilege && !privilegeHandler.canWrite(to: itemURL) {
+                if (target.requiresPrivilege || !privilegeHandler.canWrite(to: itemURL)) && !privilegeHandler.isRoot {
                     // System-owned file requiring sudo
                     try privilegeHandler.removeWithPrivilege(at: itemURL)
                     deletionSucceeded = true
@@ -121,8 +121,19 @@ public final class TrashRemover {
                     deletionSucceeded = true
                 } else {
                     // Safe move to Trash
-                    try fileManager.trashItem(at: itemURL, resultingItemURL: &trashResultURL)
-                    deletionSucceeded = true
+                    do {
+                        try fileManager.trashItem(at: itemURL, resultingItemURL: &trashResultURL)
+                        deletionSucceeded = true
+                    } catch {
+                        // If moving to trash failed due to permission/ownership, attempt privileged removal
+                        if !privilegeHandler.canWrite(to: itemURL) || (error as NSError).domain == NSCocoaErrorDomain {
+                            try privilegeHandler.authenticateIfNeeded()
+                            try privilegeHandler.removeWithPrivilege(at: itemURL)
+                            deletionSucceeded = true
+                        } else {
+                            throw error
+                        }
+                    }
                 }
             } catch {
                 deletionSucceeded = false
