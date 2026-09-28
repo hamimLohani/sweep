@@ -16,7 +16,7 @@ public struct SweepCommand: ParsableCommand {
           sweep remove cache <app>    Purge cache files for an app (e.g. Safari) or 'all'
           sweep doctor                Check system permissions and health
         """,
-        version: "sweep 1.0.6",
+        version: "sweep 1.0.7",
         subcommands: [
             ListCommand.self,
             ScanCommand.self,
