@@ -1,170 +1,99 @@
 # sweep 🧹
 
-> A professional, safe, and transparent macOS application uninstaller written in Swift.
+[![macOS](https://img.shields.io/badge/macOS-13.0%2B-black?logo=apple)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift)](https://swift.org)
+[![Homebrew](https://img.shields.io/badge/Homebrew-hamimlohani%2Ftap-blue?logo=homebrew)](https://github.com/hamimlohani/homebrew-tap)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Dragging an application to the macOS Trash leaves behind orphaned caches, preferences, containers, launch agents, and privileged helper tools. `sweep` locates all associated application components using data-driven rules, shows you exactly what will be removed, and moves them to the Trash safely with full audit logging.
-
----
-
-## Key Features
-
-- **🛡️ Safe by Default**: Moves files to the native macOS Trash via `FileManager.default.trashItem`, preserving native Finder *"Put Back"* recovery. Permanent deletion requires explicit `--permanent`.
-- **👁️ 100% Transparent**: Shows the exact file path and category of every candidate before taking action.
-- **⚡ Fast & Native**: Built in modern Swift with Foundation and POSIX APIs. Universal binary supporting Apple Silicon (`arm64`) and Intel (`x86_64`).
-- **⚙️ Data-Driven Rules**: All library and cache search paths are declared in `search_rules.json` rather than hardcoded logic.
-- **🎯 Tiered Confidence Scoring**: Distinguishes between **High** (exact bundle ID & package receipts), **Medium** (exact app name), and **Low** (vendor tokens) confidence matches to prevent false positives.
-- **🔒 Strict System Invariants**: System Integrity Protection (SIP) paths, Apple system apps (`com.apple.*`), and credential stores (`~/Library/Keychains`) are blocked by defense-in-depth security guards.
-- **📜 Audit Trail**: Records every removal transaction with original paths, trash destinations, and timestamps in `~/.config/sweep/history.json`.
+> **The clean, safe, and transparent macOS application uninstaller.**  
+> Completely remove Mac apps and all their hidden leftovers, caches, preferences, and background agents — with zero leftover junk.
 
 ---
 
-## Installation & Build
+## Why Sweep?
 
-### Homebrew (Recommended)
+Dragging an app to the Trash on macOS only deletes the `.app` bundle. Behind the scenes, gigabytes of cached files, sandbox containers, preferences, and launch agents stay behind indefinitely in `~/Library`.
 
-You can install `sweep` directly via Homebrew using the custom tap:
+`sweep` automatically finds every leftover file, shows you exactly what it found, and moves everything to the **native macOS Trash** — so you're always in complete control and can restore items with Finder's native **"Put Back"** anytime.
+
+```text
+$ sweep scan "Google Chrome"
+
+Application: Google Chrome
+Bundle ID:   com.google.Chrome
+Version:     152.0.7977.64
+App Path:    /Applications/Google Chrome.app
+App Size:    1.47 GB
+─────────────────────────────────────────────────────────────────
+Detected Leftover Files (14 items):
+
+📂 Application Support (1 items, 795.1 MB)
+  [LOW]  ~/Library/Application Support/Google (795.1 MB)
+📂 Darwin User Cache Directory (9 items, 10.9 MB)
+  [HIGH] /private/var/folders/.../com.google.Chrome (1.6 MB)
+📂 Preferences (2 items, 991 bytes)
+  [HIGH] ~/Library/Preferences/com.google.Chrome.plist (949 bytes)
+📂 WebKit Data (1 items, 3 MB)
+  [HIGH] ~/Library/WebKit/com.google.Chrome (3 MB)
+─────────────────────────────────────────────────────────────────
+Total Disk Space: 2.31 GB
+```
+
+---
+
+## Quick Install
+
+Install in one command via [Homebrew](https://brew.sh):
 
 ```bash
 brew tap hamimlohani/tap
 brew install sweep
 ```
 
-To update to future versions:
+To update `sweep` in the future:
 ```bash
 brew upgrade sweep
 ```
 
-### Requirements
-- macOS 13.0 (Ventura) or later
-- Swift 5.9+ / Xcode Command Line Tools
-
-### Building from Source
-
-```bash
-git clone https://github.com/your-username/mac_uninstaller.git
-cd mac_uninstaller
-
-# Build debug binary
-swift build
-
-# Build optimized Universal Binary (arm64 + x86_64)
-swift build -c release --arch arm64 --arch x86_64
-
-# Binary will be available at:
-# .build/apple/Products/Release/sweep
-```
-
-To run tests:
-```bash
-swift run sweep-tests
-```
-
 ---
 
----
+## Quickstart
 
-## Commands & Usage Reference
-
-Once installed via Homebrew, run `sweep` directly. (If building from source without installing, you can substitute `swift run sweep` for `sweep`).
-
-### Quick Command Summary
-
-| Command | Description | Example |
-| :--- | :--- | :--- |
-| `sweep list` | List installed applications and sizes | `sweep list` |
-| `sweep scan <app>` | Scan app and leftovers without deleting anything | `sweep scan "Slack"` |
-| `sweep remove <app>` | Scan, review checklist, and move items to Trash | `sweep remove "Slack"` |
-| `sweep doctor` | Check permissions, FDA, SIP, and compatibility | `sweep doctor` |
-| `sweep --help` | Show command-line help and usage | `sweep --help` |
-| `sweep --version` | Display installed version | `sweep --version` |
-| `man sweep` | View the complete UNIX manual page | `man sweep` |
-
----
-
-### 1. `sweep list`
-Discovers and lists installed applications in `/Applications` and `~/Applications`, displaying their application name, reverse-DNS bundle identifier, and disk size.
-
+### 1. Remove an App (Interactive & Safe)
 ```bash
-# Formatted aligned table output
-sweep list
-
-# Machine-readable JSON output (ideal for scripts and pipelines)
-sweep list --json
-```
-
-**Options:**
-- `--json` : Output installed application list in structured JSON.
-
----
-
-### 2. `sweep scan <app>`
-Performs a deep, read-only inspection of an application and all associated leftover files, caches, sandboxed containers, saved states, preferences, and launch agents. **Deletes nothing.**
-
-`<app>` accepts any of the following formats:
-- **Application Name**: `sweep scan "Google Chrome"` or `sweep scan Slack`
-- **Bundle Identifier**: `sweep scan com.google.Chrome`
-- **Application Path**: `sweep scan /Applications/Google\ Chrome.app`
-
-```bash
-# Standard categorized scan with human-readable sizes and match reasons
-sweep scan "Google Chrome"
-
-# Scan by bundle identifier with JSON output
-sweep scan com.jetbrains.intellij --json
-```
-
-**Options:**
-- `--json` : Output full `ScanResult` schema in structured JSON.
-
----
-
-### 3. `sweep remove <app>`
-The complete uninstallation workflow:
-1. Resolves the application bundle.
-2. Checks if the app is currently running (prompts and gracefully terminates if running).
-3. Discovers all associated leftovers across user and system domains.
-4. Presents an interactive checklist to review/deselect items.
-5. Unloads any active LaunchAgents or LaunchDaemons (`launchctl bootout`).
-6. Re-verifies safety invariants and moves items to the macOS Trash (`FileManager.trashItem`).
-7. Logs an atomic removal transaction to `~/.config/sweep/history.json`.
-
-```bash
-# 1. Interactive Review (Recommended for standard uninstalls)
-# Prompts you to review and deselect items before trashing
 sweep remove "Slack"
-
-# 2. Safe Trial Run (Dry Run)
-# Shows every file path that would be touched without modifying or deleting anything
-sweep remove "Slack" --dry-run --yes
-
-# 3. Automated / Non-Interactive Removal
-# Skips prompts and moves High & Medium confidence items to Trash
-sweep remove "Slack" --yes
-sweep remove "Slack" -y
-
-# 4. Deep Clean (Include Low-Confidence / Vendor Items)
-# Flags shared vendor folders (e.g. ~/Library/Application Support/Google) for removal
-sweep remove "Google Chrome" --include-low-confidence
-
-# 5. Permanent Deletion (Caution)
-# Bypasses the macOS Trash and directly removes files from disk (cannot be Put Back)
-sweep remove "Slack" --permanent
-
-# 6. Automated JSON Pipeline
-# Runs removal and outputs the final transaction record as JSON
-sweep remove "Slack" --yes --json
 ```
+Sweep checks if the app is running (offering to quit it), unloads background launch agents, shows an interactive checklist where you can toggle items, and moves everything to your Trash.
 
-**Options for `remove`:**
-- `--dry-run` : Simulate removal without moving or deleting any files. Displays all target file paths with `[WOULD REMOVE]`.
-- `-y`, `--yes` : Skip interactive confirmation and proceed with High & Medium confidence items.
-- `--permanent` : Permanently delete files (`rm`) instead of moving them to `~/.Trash`.
-- `--include-low-confidence` : Include low-confidence (vendor-level) matches in candidate list.
-- `--json` : Output the final `RemovalRecord` transaction as JSON.
+### 2. Preview Before Deleting (Safe Scan)
+```bash
+sweep scan "Spotify"
+```
+Inspect all files and caches created by an app without touching or deleting anything.
 
-#### Interactive Checklist Controls
+### 3. See Every File With a Dry Run
+```bash
+sweep remove "Spotify" --dry-run --yes
+```
+Simulates the entire removal process and prints out the exact path of every file that would be removed.
 
-When running `sweep remove` interactively, a checklist is displayed:
+### 4. List Installed Apps and Disk Space
+```bash
+sweep list
+```
+View all applications installed on your Mac, their bundle IDs, and how much disk space they occupy.
+
+### 5. Check System Health & Permissions
+```bash
+sweep doctor
+```
+Verifies that `sweep` has all necessary permissions (like Full Disk Access and Trash access) to scan and clean thoroughly.
+
+---
+
+## Interactive Removal Checklist
+
+When you run `sweep remove`, you get a clear, interactive menu before anything happens:
 
 ```text
 Review items to remove:
@@ -180,120 +109,91 @@ Commands: [Enter] Proceed | [1-4] Toggle item | [a] Select all | [n] Select none
 Enter choice:
 ```
 
-- `[Enter]` : Confirm current selection and proceed with removal.
-- `[1-N]` : Type an item number to toggle its checkbox on/off.
-- `[a]` : Select all discovered items.
-- `[n]` : Deselect all items.
-- `[q]` : Abort operation safely (no files touched).
+- **`[Enter]`**: Move all selected items to Trash.
+- **`[1-N]`**: Toggle any file on or off.
+- **`[a]`**: Select all items.
+- **`[n]`**: Deselect all items.
+- **`[q]`**: Abort safely without touching any files.
 
 ---
 
-### 4. `sweep doctor`
-Diagnoses your system environment and permissions to ensure `sweep` can operate safely and thoroughly.
+## Command Reference
+
+| Command | What it does | Example |
+| :--- | :--- | :--- |
+| `sweep list` | Shows all installed apps and disk sizes | `sweep list` |
+| `sweep scan <app>` | Discovers all leftovers (deletes nothing) | `sweep scan "Discord"` |
+| `sweep remove <app>` | Interactive uninstaller with checklist | `sweep remove "Discord"` |
+| `sweep doctor` | Diagnoses permissions and system compatibility | `sweep doctor` |
+| `sweep --help` | Shows help instructions | `sweep --help` |
+| `sweep --version` | Displays installed version | `sweep --version` |
+| `man sweep` | Opens the full manual page | `man sweep` |
+
+### Useful Flags for `sweep remove`
+
+- **`--dry-run`**: Simulate the removal without modifying or trashing any files.
+- **`-y`, `--yes`**: Skip confirmation prompts (ideal for scripts and fast uninstalls).
+- **`--include-low-confidence`**: Also include shared vendor folders (e.g. `~/Library/Application Support/Google`).
+- **`--permanent`**: Permanently deletes files immediately instead of moving them to Trash (use with caution).
+- **`--json`**: Output the removal transaction record as clean JSON.
+
+---
+
+## Safety Guarantees
+
+Your system's safety and data integrity are the #1 priority:
+
+- **Move to Trash by Default**: Files go to `~/.Trash`, meaning you can open Trash and click **"Put Back"** at any time.
+- **Zero-Touch on Passwords & Keychains**: `sweep` strictly blocks all keychain directories (`~/Library/Keychains`) and authentication services. It will never touch your logins, credentials, or passkeys.
+- **Apple Protected Apps Shield**: `sweep` refuses to touch macOS system applications (`com.apple.*`) or protected system directories (`/System`, `/usr`, `/bin`, `/sbin`).
+- **Anti-Traversal Protection**: All paths are resolved before action; symlinks attempting to trick the tool into escaping to system files are immediately rejected.
+- **Audit History**: Every uninstall logs an atomic receipt to `~/.config/sweep/history.json` with original paths and trash locations.
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+### Can I restore an app I removed?
+**Yes!** Because `sweep` moves items to the macOS Trash rather than destroying them, you can simply open your **Trash**, right-click any item, and select **"Put Back"**.
+
+### Why does `sweep doctor` suggest Full Disk Access?
+macOS protects sensitive user data (like Mail and Safari caches) under Transparency, Consent, and Control (TCC). Giving your Terminal app Full Disk Access (*System Settings → Privacy & Security → Full Disk Access*) allows `sweep` to find deep sandbox containers without causing permission popups.
+
+### Can I pass an app's bundle ID instead of its name?
+Yes! `sweep scan` and `sweep remove` accept:
+- Application name: `sweep remove "Visual Studio Code"`
+- Bundle ID: `sweep remove com.microsoft.VSCode`
+- Direct path: `sweep remove /Applications/Visual\ Studio\ Code.app`
+
+---
+
+## Contributing & Building from Source
+
+If you want to contribute to `sweep` or build it locally:
 
 ```bash
-sweep doctor
-```
+git clone https://github.com/hamimLohani/sweep.git
+cd sweep
 
-**Checks performed:**
-- **macOS Version Compatibility**: Verifies macOS 13.0+ (Ventura) for APFS and modern `launchctl` support.
-- **Full Disk Access (FDA)**: Verifies whether the terminal has FDA to scan privacy-guarded Library domains (`~/Library/Safari`, `~/Library/Mail`, sandboxed cookies). Provides exact instructions to enable it if missing.
-- **macOS Trash Directory**: Checks that `~/.Trash` is writable for safe file removals.
-- **System Integrity Protection (SIP)**: Verifies that macOS core system protection is active.
-- **Audit History Store**: Checks write permissions for `~/.config/sweep/history.json`.
+# Build debug binary
+swift build
 
----
+# Run unit tests (runs in isolated temporary sandboxes)
+swift run sweep-tests
 
-### 5. Manual Page (`man sweep`)
-A full UNIX manual page is installed in Section 1:
-
-```bash
-man sweep
+# Build universal release binary (arm64 + x86_64)
+swift build -c release --arch arm64 --arch x86_64
 ```
 
 ---
 
-### Common Workflows & Recipes
+## Author
 
-#### Safe Verification Before Uninstalling
-```bash
-# Step 1: Check what files exist
-sweep scan "Spotify"
-
-# Step 2: Simulate what will happen
-sweep remove "Spotify" --dry-run --yes
-
-# Step 3: Perform actual removal
-sweep remove "Spotify"
-```
-
-#### Uninstalling by Bundle Identifier (Headless or Scripted)
-```bash
-sweep remove com.tinyspeck.slackmacgap --yes
-```
-
-#### Auditing Removal History
-All removals are logged in JSON format. You can inspect your past uninstallations using `cat` or `jq`:
-```bash
-cat ~/.config/sweep/history.json
-# Or pretty-print with jq:
-jq . ~/.config/sweep/history.json
-```
-
----
-
-## Safety Invariants & macOS Protections
-
-1. **Strict Denylist**:
-   `sweep` rejects any operations involving:
-   - Root & System Volumes: `/`, `/System`, `/usr`, `/bin`, `/sbin`, `/private/etc`
-   - System Integrity directories: `/Library/Apple`, `/Library/SystemExtensions`
-   - User Credential & Identity Stores: `~/Library/Keychains`, `~/Library/AuthenticationServices`, `~/Library/IdentityServices`, `~/Library/Accounts`
-2. **Apple System Application Shield**:
-   Any bundle identifier starting with `com.apple.` or located inside `/System/Applications` cannot be scanned or removed.
-3. **Symlink Escape Guard**:
-   Every path is canonicalized with POSIX symlink resolution (`resolvingSymlinksInPath()`). Any symlink attempting to escape into system directories or outside allowed user/application roots is rejected.
-4. **Defense-in-Depth**:
-   Safety checks run twice: once during scanning, and once again immediately before moving each individual file into the Trash.
-5. **Length Guards**:
-   Short application names (e.g., apps named `"Go"` or `"R"`) are restricted from loose folder name matching to prevent deleting shared or unrelated resources.
-
----
-
-## Exit Codes
-
-`sweep` conforms to standard UNIX CLI exit codes:
-
-| Code | Meaning | Description |
-| :---: | :--- | :--- |
-| `0` | **Success** | Command completed successfully. |
-| `1` | **General Error** | Unhandled runtime error or process execution failure. |
-| `2` | **Usage Error** | Invalid flags, missing required arguments, or invalid path. |
-| `3` | **Permission Error** | Operation blocked by permissions, SIP, or Full Disk Access required. |
-| `4` | **App Not Found** | The specified target application was not found. |
-
----
-
-## Architecture & Extension Points
-
-The codebase is split into:
-- **`SweepCore`**: A clean, testable Swift framework containing models, resolvers, scanners, safety guards, and execution engines.
-- **`sweep`**: The command-line interface executable using `swift-argument-parser` and ANSI UI helpers.
-
-### Future Extension Points:
-- **`sweep restore`**: The audit manifest format in `~/.config/sweep/history.json` maps each `originalPath` to its `trashPath`, enabling a future restore command to put files back.
-- **`sweep orphans`**: The `LeftoverScanner` engine can perform an inverted scan across `~/Library/Containers` and `~/Library/Application Support` to identify leftover folders whose parent application is no longer installed.
-
----
-
-## Known Limitations
-
-- **App Store & System Sandboxing**: Certain folders inside `~/Library` require **Full Disk Access** granted to your Terminal app (run `sweep doctor` to verify).
-- **Keychain Items**: Sandboxed keychain entries are managed directly by Apple's `Security.framework`. Because raw deletion of keychain databases would corrupt the user's login keychain, `sweep` enforces a zero-touch policy on keychain files.
-- **Kernel Extensions**: macOS Big Sur+ replaces kernel extensions (`kext`) with System Extensions managed through macOS System Settings. `sweep` does not unload system extensions requiring root MDM / SIP modifications.
+Created with care by **Md. Inzamamul Lohani** ([@hamimLohani](https://github.com/hamimLohani)).  
+Feedback, bug reports, and pull requests are warmly welcomed!
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Released under the [MIT License](LICENSE) © 2026 Md. Inzamamul Lohani.
