@@ -245,4 +245,50 @@ do {
     fail("SafetyGuardTests", "\(error)")
 }
 
+// Suite 4: CacheScannerTests
+print("\n\u{001B}[1;34m▶ Suite: CacheScannerTests\u{001B}[0m")
+do {
+    let sandbox = try TestSandbox()
+    defer { sandbox.cleanUp() }
+
+    let bundleID = "com.apple.Safari"
+    let appName = "Safari"
+
+    // Populate fake cache directory and fake preferences
+    let fakeCache = sandbox.userLibraryURL.appendingPathComponent("Caches/\(bundleID)")
+    try FileManager.default.createDirectory(at: fakeCache, withIntermediateDirectories: true)
+    try "fake-cached-data".write(to: fakeCache.appendingPathComponent("cached.blob"), atomically: true, encoding: .utf8)
+
+    let fakePref = sandbox.userLibraryURL.appendingPathComponent("Preferences/\(bundleID).plist")
+    try "fake-pref".write(to: fakePref, atomically: true, encoding: .utf8)
+
+    let safariApp = AppInfo(
+        bundleURL: URL(fileURLWithPath: "/Applications/Safari.app"),
+        bundleIdentifier: bundleID,
+        bundleName: appName,
+        displayName: appName,
+        executableName: "Safari",
+        vendorToken: nil,
+        version: "18.0",
+        bundleSizeBytes: 50000000,
+        isSystemApp: true
+    )
+
+    let guardInstance = SafetyGuard(customAllowedRoot: sandbox.rootURL)
+    let cacheScanner = CacheScanner(fileManager: .default, safetyGuard: guardInstance, customHomeDirectory: sandbox.userHomeURL)
+
+    let cacheResult = cacheScanner.scanCache(for: safariApp)
+    assert(!cacheResult.cacheItems.isEmpty, "CacheScanner finds Safari cache folder")
+    assert(cacheResult.cacheItems.contains { $0.url.lastPathComponent == bundleID }, "Cache folder matches bundle ID")
+    assert(!cacheResult.cacheItems.contains { $0.url.lastPathComponent == "\(bundleID).plist" }, "CacheScanner never includes preferences")
+
+    // Safety validation: App bundle deletion must be blocked even in cache mode
+    assertThrows({
+        try guardInstance.validate(itemURL: safariApp.bundleURL, for: safariApp, isCacheOnly: true)
+    }, "SafetyGuard rejects deleting sealed system application bundle even in cache mode")
+} catch {
+    fail("CacheScannerTests", "\(error)")
+}
+
 print("\n\u{001B}[1;32m🎉 All Unit Tests Passed Successfully!\u{001B}[0m\n")
+

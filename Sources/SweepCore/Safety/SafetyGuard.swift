@@ -89,7 +89,7 @@ public final class SafetyGuard {
     }
 
     /// Validates an item path against all safety rules. Throws `SweepError` if unsafe.
-    public func validate(itemURL: URL, for appInfo: AppInfo? = nil) throws {
+    public func validate(itemURL: URL, for appInfo: AppInfo? = nil, isCacheOnly: Bool = false) throws {
         let rawPath = itemURL.standardized.path
 
         // Check 1: Must be absolute and non-empty
@@ -100,7 +100,14 @@ public final class SafetyGuard {
         // Check 2: Core macOS system bundle protection
         if let appInfo = appInfo {
             if Self.isProtectedSystemApp(bundleIdentifier: appInfo.bundleIdentifier, bundleURL: appInfo.bundleURL) {
-                throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
+                let itemCanonical = itemURL.resolvingSymlinksInPath().standardized.path
+                let appCanonical = appInfo.bundleURL.resolvingSymlinksInPath().standardized.path
+                if itemCanonical == appCanonical || itemURL.standardized.path == appInfo.bundleURL.standardized.path {
+                    throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
+                }
+                if !isCacheOnly {
+                    throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
+                }
             }
         }
 

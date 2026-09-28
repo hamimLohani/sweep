@@ -74,10 +74,20 @@ and scans all standard user and system library domains for leftovers.
 Displays items grouped by location along with byte sizes, confidence
 levels, and matching rationale.
 .Sy This subcommand deletes nothing.
-.It Cm remove Ar app Op flags
-Performs a scan, checks if the target application is currently running
-(prompting to terminate it), displays an interactive review checklist,
-unloads related LaunchAgents or LaunchDaemons with
+.It Cm remove Op cache Op Ar app Op flags
+When invoked with
+.Qq cache
+(e.g.,
+.Cm sweep remove cache
+or
+.Cm sweep remove cache Ar Safari ) ,
+scans and purges application cache directories (including
+.Pa ~/Library/Caches ,
+Darwin system user caches, and sandbox container caches) while preserving the application binary, user preferences, and documents.
+Core system applications (such as Safari and Finder) are permitted for cache purging.
+All cache deletions require administrator authentication
+.Pq Xr sudo 8 .
+When invoked with an application name directly, performs a complete uninstallation, unloads related LaunchAgents or LaunchDaemons with
 .Xr launchctl 1 ,
 and safely moves selected items to the macOS Trash.
 .It Cm doctor

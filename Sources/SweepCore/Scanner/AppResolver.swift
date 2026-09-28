@@ -16,7 +16,10 @@ public final class AppResolver {
         if let customDirs = customSearchDirectories {
             self.applicationDirectories = customDirs
         } else {
-            var dirs = [URL(fileURLWithPath: "/Applications")]
+            var dirs = [
+                URL(fileURLWithPath: "/Applications"),
+                URL(fileURLWithPath: "/System/Applications")
+            ]
             let userApps = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
             if fileManager.fileExists(atPath: userApps.path) {
                 dirs.append(userApps)
@@ -30,6 +33,29 @@ public final class AppResolver {
         let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw SweepError.invalidPath(target)
+        }
+
+        let lower = trimmed.lowercased()
+
+        // Direct Core System app resolution for Safari and Finder
+        if lower == "finder" || lower == "com.apple.finder" {
+            let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
+            if fileManager.fileExists(atPath: finderURL.path) {
+                return try parseAppBundle(at: finderURL, includeReceipts: false)
+            }
+        }
+        if lower == "safari" || lower == "com.apple.safari" {
+            let safariPaths = [
+                "/Applications/Safari.app",
+                "/System/Applications/Safari.app",
+                "/System/Cryptexes/App/System/Applications/Safari.app"
+            ]
+            for path in safariPaths {
+                let url = URL(fileURLWithPath: path)
+                if fileManager.fileExists(atPath: url.path) {
+                    return try parseAppBundle(at: url, includeReceipts: false)
+                }
+            }
         }
 
         // Case 1: Check if target is an existing path to a .app bundle
@@ -74,6 +100,22 @@ public final class AppResolver {
         for dir in applicationDirectories {
             guard fileManager.fileExists(atPath: dir.path) else { continue }
             discoverApps(in: dir, currentDepth: 0, maxDepth: 2, results: &foundApps)
+        }
+
+        // Include Finder if not discovered
+        let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
+        if fileManager.fileExists(atPath: finderURL.path), !foundApps.contains(where: { $0.bundleIdentifier == "com.apple.finder" }) {
+            if let finderInfo = try? parseAppBundle(at: finderURL, includeReceipts: false) {
+                foundApps.append(finderInfo)
+            }
+        }
+
+        // Include Safari if not discovered
+        let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
+        if fileManager.fileExists(atPath: safariURL.path), !foundApps.contains(where: { $0.bundleIdentifier.lowercased() == "com.apple.safari" }) {
+            if let safariInfo = try? parseAppBundle(at: safariURL, includeReceipts: false) {
+                foundApps.append(safariInfo)
+            }
         }
 
         return foundApps.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }

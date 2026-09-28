@@ -89,6 +89,22 @@ sweep doctor
 ```
 Verifies that `sweep` has all necessary permissions (like Full Disk Access and Trash access) to scan and clean thoroughly.
 
+### 6. Clean Application Caches (Without Uninstalling Apps)
+```bash
+# Clean caches for ALL installed applications
+sweep remove cache
+
+# Clean caches for a specific application (including Safari, Finder, or Chrome)
+sweep remove cache Safari
+sweep remove cache Finder
+sweep remove cache "Google Chrome"
+
+# Test run without deleting
+sweep remove cache --dry-run
+```
+> [!NOTE]
+> Cache cleaning targets temporary caches (`~/Library/Caches`, Darwin caches, WebKit data, and sandbox container caches) while preserving all application binaries, user settings, preferences, and personal documents. Administrator privileges (`sudo`) are authenticated to purge system and Darwin cache directories cleanly.
+
 ---
 
 ## Interactive Removal Checklist
