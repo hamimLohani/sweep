@@ -97,15 +97,12 @@ public final class SafetyGuard {
             throw SweepError.protectedSystemComponent("Path is empty or root filesystem.")
         }
 
-        // Check 2: Core macOS system bundle protection
+        // Check 2: Core macOS system bundle protection (the app bundle itself can never be deleted)
         if let appInfo = appInfo {
             if Self.isProtectedSystemApp(bundleIdentifier: appInfo.bundleIdentifier, bundleURL: appInfo.bundleURL) {
                 let itemCanonical = itemURL.resolvingSymlinksInPath().standardized.path
                 let appCanonical = appInfo.bundleURL.resolvingSymlinksInPath().standardized.path
                 if itemCanonical == appCanonical || itemURL.standardized.path == appInfo.bundleURL.standardized.path {
-                    throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
-                }
-                if !isCacheOnly {
                     throw SweepError.protectedSystemComponent("Target '\(appInfo.bundleName)' (\(appInfo.bundleIdentifier)) is a sealed macOS system-protected application.")
                 }
             }
