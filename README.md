@@ -20,6 +20,20 @@ Dragging an application to the macOS Trash leaves behind orphaned caches, prefer
 
 ## Installation & Build
 
+### Homebrew (Recommended)
+
+You can install `sweep` directly via Homebrew using the custom tap:
+
+```bash
+brew tap hamimlohani/tap
+brew install sweep
+```
+
+To update to future versions:
+```bash
+brew upgrade sweep
+```
+
 ### Requirements
 - macOS 13.0 (Ventura) or later
 - Swift 5.9+ / Xcode Command Line Tools
