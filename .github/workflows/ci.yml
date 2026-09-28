@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test on macOS
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Swift & macOS environment
+        run: |
+          swift --version
+          uname -m
+          sw_vers
+
+      - name: Build Sweep (Debug)
+        run: swift build
+
+      - name: Run Test Suite
+        run: swift run sweep-tests
+
+      - name: Build Sweep Universal Binary (Release)
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Verify CLI Help
+        run: .build/apple/Products/Release/sweep --help
