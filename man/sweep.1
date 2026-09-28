@@ -1,0 +1,201 @@
+.\" Manual page for sweep
+.Dd September 28, 2026
+.Dt SWEEP 1
+.Os
+.Sh NAME
+.Nm sweep
+.Nd clean, safe, and transparent macOS application uninstaller
+.Sh SYNOPSIS
+.Nm
+.Op Fl -version
+.Op Fl h | -help
+.Nm
+.Cm list
+.Op Fl -json
+.Nm
+.Cm scan
+.Ar app
+.Op Fl -json
+.Nm
+.Cm remove
+.Ar app
+.Op Fl -dry-run
+.Op Fl y | -yes
+.Op Fl -permanent
+.Op Fl -include-low-confidence
+.Op Fl -json
+.Nm
+.Cm doctor
+.Sh DESCRIPTION
+.Nm
+is a command-line uninstaller engineered specifically for macOS.
+Dragging an application bundle (.app) to the macOS Trash leaves behind
+orphaned caches, preferences, sandboxed containers, saved states,
+application support files, launch agents, and background helper daemons.
+.Pp
+.Nm
+locates all associated leftovers using data-driven heuristics,
+verifies them against strict system safety guards, displays all
+candidate file paths to the user, and moves them to the native macOS
+Trash preserving Finder recovery.
+.Sh TARGET RESOLUTION
+The
+.Ar app
+argument accepted by
+.Cm scan
+and
+.Cm remove
+can be any of the following:
+.Bl -bullet -compact
+.It
+An application name (e.g.,
+.Qq Slack ,
+.Qq "Google Chrome" )
+.It
+A reverse-DNS bundle identifier (e.g.,
+.Qq com.tinyspeck.slackmacgap )
+.It
+An absolute or relative filesystem path to an application bundle (e.g.,
+.Pa /Applications/Slack.app )
+.El
+.Sh SUBCOMMANDS
+.Bl -tag -width Ds
+.It Cm list Op Fl -json
+Scans
+.Pa /Applications
+and
+.Pa ~/Applications
+for installed applications and displays their display names, bundle
+identifiers, and bundle sizes.
+.It Cm scan Ar app Op Fl -json
+Resolves the target application, queries installer receipts via
+.Xr pkgutil 1 ,
+and scans all standard user and system library domains for leftovers.
+Displays items grouped by location along with byte sizes, confidence
+levels, and matching rationale.
+.Sy This subcommand deletes nothing.
+.It Cm remove Ar app Op flags
+Performs a scan, checks if the target application is currently running
+(prompting to terminate it), displays an interactive review checklist,
+unloads related LaunchAgents or LaunchDaemons with
+.Xr launchctl 1 ,
+and safely moves selected items to the macOS Trash.
+.It Cm doctor
+Runs diagnostic checks verifying Full Disk Access (FDA), macOS version
+compatibility (macOS 13.0+ required), User Trash permissions, System
+Integrity Protection (SIP), and the configuration history store.
+.El
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl -dry-run
+Simulates the removal process.
+Displays every file path that would be touched without modifying or
+moving any files on disk.
+.It Fl y , -yes
+Skips interactive confirmation prompts and automatically selects all
+High and Medium confidence leftover candidates for removal.
+.It Fl -permanent
+Permanently deletes items from the filesystem using direct removal
+rather than moving them to the macOS Trash.
+.Sy Use with caution:
+items deleted with this flag cannot be recovered via Finder.
+.It Fl -include-low-confidence
+Includes low-confidence candidates (such as generic vendor-prefixed
+directories) in the removal plan.
+By default, low-confidence items are excluded to prevent accidental
+removal of shared vendor resources.
+.It Fl -json
+Outputs structured JSON data instead of human-readable colored
+terminal output.
+Useful for script automation and machine consumption.
+.It Fl -version
+Displays the current version of
+.Nm .
+.It Fl h , -help
+Displays command-line usage information.
+.El
+.Sh SAFETY INVARIANTS
+.Nm
+enforces defense-in-depth safety invariants to prevent system damage:
+.Bl -tag -width Ds
+.It Sy System Denylist
+Operations involving root and system paths are strictly blocked:
+.Pa / ,
+.Pa /System ,
+.Pa /usr ,
+.Pa /bin ,
+.Pa /sbin ,
+.Pa /private/etc ,
+.Pa /Library/Apple ,
+and
+.Pa /Library/SystemExtensions .
+.It Sy Credential & Identity Protection
+A zero-touch policy is enforced on user authentication databases.
+.Pa ~/Library/Keychains ,
+.Pa ~/Library/AuthenticationServices ,
+and
+.Pa ~/Library/IdentityServices
+are unconditionally excluded from scanning and deletion.
+.It Sy Apple System Application Shield
+Applications with bundle identifiers beginning with
+.Qq com.apple.
+or bundles installed inside
+.Pa /System/Applications
+cannot be removed.
+.It Sy Symlink Canonicalization
+All paths are resolved to their canonical targets using symlink
+resolution before validation.
+Any symlink attempting to escape into system boundaries is rejected.
+.It Sy Native Trash Recovery
+By default, files are moved to the Trash via
+.Dv FileManager.trashItem ,
+preserving APFS metadata and native Finder
+.Qq Put Back
+restoration.
+.El
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/.config/sweep/history.json
+Audit log containing timestamped records of every removal transaction,
+including original file paths, trash destinations, and byte sizes.
+.El
+.Sh EXIT STATUS
+.Bl -tag -width 4n
+.It 0
+Successful completion.
+.It 1
+General error or process execution failure.
+.It 2
+Command-line usage error (invalid flags or missing arguments).
+.It 3
+Permission error, System Integrity Protection restriction, or system
+application rejection.
+.It 4
+Target application not found.
+.El
+.Sh EXAMPLES
+List installed applications:
+.Pp
+.Dl $ sweep list
+.Pp
+Scan an application and view all detected leftover files without deleting anything:
+.Pp
+.Dl $ sweep scan "Slack"
+.Pp
+Perform a safe trial run showing exactly what file paths would be deleted:
+.Pp
+.Dl $ sweep remove "Slack" --dry-run --yes
+.Pp
+Interactively review and uninstall an application:
+.Pp
+.Dl $ sweep remove "Slack"
+.Pp
+Check system permissions and Full Disk Access:
+.Pp
+.Dl $ sweep doctor
+.Sh SEE ALSO
+.Xr launchctl 1 ,
+.Xr pkgutil 1
+.Sh AUTHORS
+.An "Sweep Contributors"
+.Aq Lk https://github.com/hamimLohani/sweep

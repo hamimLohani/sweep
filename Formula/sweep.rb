@@ -11,6 +11,7 @@ class Sweep < Formula
   def install
     system "swift", "build", "--disable-sandbox", "-c", "release"
     bin.install ".build/release/sweep"
+    man1.install "man/sweep.1"
   end
 
   test do
