@@ -17,9 +17,7 @@ let package = Package(
         .target(
             name: "SweepCore",
             dependencies: [],
-            resources: [
-                .process("Resources")
-            ]
+            exclude: ["Resources"]
         ),
         .executableTarget(
             name: "sweep",
