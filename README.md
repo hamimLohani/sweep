@@ -61,51 +61,183 @@ swift run sweep-tests
 
 ---
 
-## Commands & Usage
+---
+
+## Commands & Usage Reference
+
+Once installed via Homebrew, run `sweep` directly. (If building from source without installing, you can substitute `swift run sweep` for `sweep`).
+
+### Quick Command Summary
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `sweep list` | List installed applications and sizes | `sweep list` |
+| `sweep scan <app>` | Scan app and leftovers without deleting anything | `sweep scan "Slack"` |
+| `sweep remove <app>` | Scan, review checklist, and move items to Trash | `sweep remove "Slack"` |
+| `sweep doctor` | Check permissions, FDA, SIP, and compatibility | `sweep doctor` |
+| `sweep --help` | Show command-line help and usage | `sweep --help` |
+| `sweep --version` | Display installed version | `sweep --version` |
+| `man sweep` | View the complete UNIX manual page | `man sweep` |
+
+---
 
 ### 1. `sweep list`
-Lists all installed applications in `/Applications` and `~/Applications` with bundle identifiers and sizes.
+Discovers and lists installed applications in `/Applications` and `~/Applications`, displaying their application name, reverse-DNS bundle identifier, and disk size.
 
 ```bash
-swift run sweep list
-swift run sweep list --json
+# Formatted aligned table output
+sweep list
+
+# Machine-readable JSON output (ideal for scripts and pipelines)
+sweep list --json
 ```
+
+**Options:**
+- `--json` : Output installed application list in structured JSON.
+
+---
 
 ### 2. `sweep scan <app>`
-Discovers the application bundle and all associated leftover files, caches, preferences, and launch agents without touching anything.
+Performs a deep, read-only inspection of an application and all associated leftover files, caches, sandboxed containers, saved states, preferences, and launch agents. **Deletes nothing.**
 
-`<app>` accepts an app name (e.g. `"Slack"`), a bundle ID (`"com.tinyspeck.slackmacgap"`), or a direct path (`"/Applications/Slack.app"`).
+`<app>` accepts any of the following formats:
+- **Application Name**: `sweep scan "Google Chrome"` or `sweep scan Slack`
+- **Bundle Identifier**: `sweep scan com.google.Chrome`
+- **Application Path**: `sweep scan /Applications/Google\ Chrome.app`
 
 ```bash
-swift run sweep scan "Google Chrome"
-swift run sweep scan com.jetbrains.intellij --json
+# Standard categorized scan with human-readable sizes and match reasons
+sweep scan "Google Chrome"
+
+# Scan by bundle identifier with JSON output
+sweep scan com.jetbrains.intellij --json
 ```
+
+**Options:**
+- `--json` : Output full `ScanResult` schema in structured JSON.
+
+---
 
 ### 3. `sweep remove <app>`
-Runs a scan, provides an interactive checklist to review and toggle items, halts running processes gracefully, unloads launch agents, and moves files to the Trash.
+The complete uninstallation workflow:
+1. Resolves the application bundle.
+2. Checks if the app is currently running (prompts and gracefully terminates if running).
+3. Discovers all associated leftovers across user and system domains.
+4. Presents an interactive checklist to review/deselect items.
+5. Unloads any active LaunchAgents or LaunchDaemons (`launchctl bootout`).
+6. Re-verifies safety invariants and moves items to the macOS Trash (`FileManager.trashItem`).
+7. Logs an atomic removal transaction to `~/.config/sweep/history.json`.
 
 ```bash
-# Safe interactive removal
-swift run sweep remove "Slack"
+# 1. Interactive Review (Recommended for standard uninstalls)
+# Prompts you to review and deselect items before trashing
+sweep remove "Slack"
 
-# Safe trial run (simulates removal and shows all target file paths without touching disk)
-swift run sweep remove "Slack" --dry-run --yes
+# 2. Safe Trial Run (Dry Run)
+# Shows every file path that would be touched without modifying or deleting anything
+sweep remove "Slack" --dry-run --yes
 
-# Non-interactive removal
-swift run sweep remove "Slack" --yes
+# 3. Automated / Non-Interactive Removal
+# Skips prompts and moves High & Medium confidence items to Trash
+sweep remove "Slack" --yes
+sweep remove "Slack" -y
 
-# Include low-confidence (vendor-level) matches
-swift run sweep remove "Slack" --include-low-confidence
+# 4. Deep Clean (Include Low-Confidence / Vendor Items)
+# Flags shared vendor folders (e.g. ~/Library/Application Support/Google) for removal
+sweep remove "Google Chrome" --include-low-confidence
 
-# Permanent deletion (bypasses Trash - use with caution)
-swift run sweep remove "Slack" --permanent
+# 5. Permanent Deletion (Caution)
+# Bypasses the macOS Trash and directly removes files from disk (cannot be Put Back)
+sweep remove "Slack" --permanent
+
+# 6. Automated JSON Pipeline
+# Runs removal and outputs the final transaction record as JSON
+sweep remove "Slack" --yes --json
 ```
 
+**Options for `remove`:**
+- `--dry-run` : Simulate removal without moving or deleting any files. Displays all target file paths with `[WOULD REMOVE]`.
+- `-y`, `--yes` : Skip interactive confirmation and proceed with High & Medium confidence items.
+- `--permanent` : Permanently delete files (`rm`) instead of moving them to `~/.Trash`.
+- `--include-low-confidence` : Include low-confidence (vendor-level) matches in candidate list.
+- `--json` : Output the final `RemovalRecord` transaction as JSON.
+
+#### Interactive Checklist Controls
+
+When running `sweep remove` interactively, a checklist is displayed:
+
+```text
+Review items to remove:
+──────────────────────────────────────────────────────────────────────
+ 1. [✓] [HIGH] ~/Library/Preferences/com.example.app.plist (4.2 KB)
+ 2. [✓] [HIGH] ~/Library/Containers/com.example.app (12.4 MB)
+ 3. [✓] [MED]  ~/Library/Application Support/ExampleApp (45.1 MB)
+ 4. [ ] [LOW]  ~/Library/Application Support/ExampleVendor (5.2 MB)
+──────────────────────────────────────────────────────────────────────
+Selected: 3/4 items (61.7 MB)
+
+Commands: [Enter] Proceed | [1-4] Toggle item | [a] Select all | [n] Select none | [q] Cancel
+Enter choice:
+```
+
+- `[Enter]` : Confirm current selection and proceed with removal.
+- `[1-N]` : Type an item number to toggle its checkbox on/off.
+- `[a]` : Select all discovered items.
+- `[n]` : Deselect all items.
+- `[q]` : Abort operation safely (no files touched).
+
+---
+
 ### 4. `sweep doctor`
-Verifies Full Disk Access (FDA), macOS compatibility, Trash permissions, and SIP protection, with actionable fix instructions.
+Diagnoses your system environment and permissions to ensure `sweep` can operate safely and thoroughly.
 
 ```bash
-swift run sweep doctor
+sweep doctor
+```
+
+**Checks performed:**
+- **macOS Version Compatibility**: Verifies macOS 13.0+ (Ventura) for APFS and modern `launchctl` support.
+- **Full Disk Access (FDA)**: Verifies whether the terminal has FDA to scan privacy-guarded Library domains (`~/Library/Safari`, `~/Library/Mail`, sandboxed cookies). Provides exact instructions to enable it if missing.
+- **macOS Trash Directory**: Checks that `~/.Trash` is writable for safe file removals.
+- **System Integrity Protection (SIP)**: Verifies that macOS core system protection is active.
+- **Audit History Store**: Checks write permissions for `~/.config/sweep/history.json`.
+
+---
+
+### 5. Manual Page (`man sweep`)
+A full UNIX manual page is installed in Section 1:
+
+```bash
+man sweep
+```
+
+---
+
+### Common Workflows & Recipes
+
+#### Safe Verification Before Uninstalling
+```bash
+# Step 1: Check what files exist
+sweep scan "Spotify"
+
+# Step 2: Simulate what will happen
+sweep remove "Spotify" --dry-run --yes
+
+# Step 3: Perform actual removal
+sweep remove "Spotify"
+```
+
+#### Uninstalling by Bundle Identifier (Headless or Scripted)
+```bash
+sweep remove com.tinyspeck.slackmacgap --yes
+```
+
+#### Auditing Removal History
+All removals are logged in JSON format. You can inspect your past uninstallations using `cat` or `jq`:
+```bash
+cat ~/.config/sweep/history.json
+# Or pretty-print with jq:
+jq . ~/.config/sweep/history.json
 ```
 
 ---
