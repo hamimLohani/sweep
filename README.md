@@ -3,10 +3,21 @@
 [![macOS](https://img.shields.io/badge/macOS-13.0%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift)](https://swift.org)
 [![Homebrew](https://img.shields.io/badge/Homebrew-hamimlohani%2Ftap-blue?logo=homebrew)](https://github.com/hamimlohani/homebrew-tap)
+[![YouTube](https://img.shields.io/badge/YouTube-Demo%20Video-red?logo=youtube)](https://youtu.be/YeE9cJ0VX7U?si=493ybk6-j2XGRrZA)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **The clean, safe, and transparent macOS application uninstaller.**  
-> Completely remove Mac apps and all their hidden leftovers, caches, preferences, and background agents — with zero leftover junk.
+> Completely remove Mac apps and all their hidden leftovers, caches, preferences, and background agents — with zero leftover junk.  
+>  
+> 📺 **Video Walkthrough:** [Watch on YouTube](https://youtu.be/YeE9cJ0VX7U?si=493ybk6-j2XGRrZA)
+
+---
+
+## Demo
+
+[![sweep - macos uninstallation handler](https://img.youtube.com/vi/YeE9cJ0VX7U/maxresdefault.jpg)](https://youtu.be/YeE9cJ0VX7U?si=493ybk6-j2XGRrZA)
+
+*Click the image above to watch the walkthrough on [YouTube](https://youtu.be/YeE9cJ0VX7U?si=493ybk6-j2XGRrZA).*
 
 ---
 
