@@ -135,9 +135,16 @@ do {
     let appByPath = try resolver.resolve(target: directAppURL.path)
     assert(appByPath.bundleName == "DirectApp", "Resolve by path succeeds")
 
+    // Test 3b: Resolve with trailing slash (tab-completion support)
+    let appByTrailingSlash = try resolver.resolve(target: directAppURL.path + "/")
+    assert(appByTrailingSlash.bundleName == "DirectApp", "Resolve by path with trailing slash succeeds")
+    let appByNameWithExtSlash = try resolver.resolve(target: "DirectApp.app/")
+    assert(appByNameWithExtSlash.bundleName == "DirectApp", "Resolve by name with .app/ succeeds")
+
     // Test 4: Vendor token extraction edge cases
     assert(resolver.extractVendorToken(from: "com.tinyspeck.slackmacgap") == "tinyspeck", "Vendor token: tinyspeck")
     assert(resolver.extractVendorToken(from: "org.mozilla.firefox") == "mozilla", "Vendor token: mozilla")
+    assert(resolver.extractVendorToken(from: "io.github.someone.tool") == "someone", "Vendor token skips generic 'github' prefix")
     assert(resolver.extractVendorToken(from: "com.x") == nil, "Vendor token: too short returns nil")
 
     // Test 5: Non-existent app throws appNotFound
@@ -226,6 +233,8 @@ do {
     // Test 2: Structural root directory rejection
     let rootFolder = sandbox.userHomeURL.appendingPathComponent("Library/Application Support")
     assertThrows({ try guardInstance.validate(itemURL: rootFolder) }, "SafetyGuard rejects structural root folder 'Application Support'")
+    assertThrows({ try guardInstance.validate(itemURL: sandbox.userLibraryURL) }, "SafetyGuard rejects structural root folder 'Library'")
+    assertThrows({ try guardInstance.validate(itemURL: sandbox.applicationsURL) }, "SafetyGuard rejects structural root folder 'Applications'")
 
     // Test 3: Symlink escape rejection
     let insideURL = sandbox.userLibraryURL.appendingPathComponent("Caches/malicious_symlink")

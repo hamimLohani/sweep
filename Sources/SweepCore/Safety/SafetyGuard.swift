@@ -112,8 +112,10 @@ public final class SafetyGuard {
         let lastComponent = itemURL.lastPathComponent
         if Self.protectedRootFolderNames.contains(lastComponent) {
             // Check if the item IS the root folder itself rather than a sub-item
-            let parent = itemURL.deletingLastPathComponent().lastPathComponent
-            if parent == "Library" || parent == "Users" || parent == "/" {
+            let parentURL = itemURL.deletingLastPathComponent()
+            let parent = parentURL.lastPathComponent
+            let grandParent = parentURL.deletingLastPathComponent().lastPathComponent
+            if lastComponent == "Library" || lastComponent == "Applications" || parent == "Library" || parent == "Users" || parent == "/" || grandParent == "Users" || parent.hasSuffix("Home") {
                 throw SweepError.protectedSystemComponent("Cannot delete system structural root folder: '\(rawPath)'.")
             }
         }
@@ -146,7 +148,17 @@ public final class SafetyGuard {
         }
 
         let homePath = fileManager.homeDirectoryForCurrentUser.standardized.path
-        let isInsideHome = canonicalPath.hasPrefix(homePath + "/")
+        if canonicalPath == homePath {
+            throw SweepError.protectedSystemComponent("Cannot delete user home directory: '\(rawPath)'.")
+        }
+
+        var isInsideHome = canonicalPath.hasPrefix(homePath + "/")
+        if !isInsideHome && canonicalPath.hasPrefix("/Users/") {
+            let parts = canonicalPath.split(separator: "/")
+            if parts.count >= 2 && parts[0] == "Users" {
+                isInsideHome = true
+            }
+        }
         let isInsideApplications = canonicalPath.hasPrefix("/Applications/") || canonicalPath.hasPrefix("/System/Volumes/Data/Applications/")
         let isInsideLibrary = canonicalPath.hasPrefix("/Library/") || canonicalPath.hasPrefix("/System/Volumes/Data/Library/")
         let isInsideDarwin = canonicalPath.hasPrefix("/private/var/folders/") || canonicalPath.hasPrefix("/var/folders/")

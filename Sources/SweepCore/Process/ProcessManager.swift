@@ -49,8 +49,13 @@ public final class ProcessManager {
         let targetDomain = isDaemon ? "system" : "gui/\(uid)"
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["bootout", targetDomain, plistURL.path]
+        if isDaemon && !PrivilegeHandler.shared.isRoot {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            process.arguments = ["/bin/launchctl", "bootout", targetDomain, plistURL.path]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["bootout", targetDomain, plistURL.path]
+        }
 
         let pipe = Pipe()
         process.standardError = pipe
@@ -58,11 +63,11 @@ public final class ProcessManager {
 
         do {
             try process.run()
+            let errData = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 return (true, "Unloaded \(plistURL.lastPathComponent)")
             } else {
-                let errData = pipe.fileHandleForReading.readDataToEndOfFile()
                 let errMsg = String(data: errData, encoding: .utf8) ?? ""
                 return (false, "launchctl bootout: \(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))")
             }

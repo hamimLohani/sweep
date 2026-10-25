@@ -84,7 +84,7 @@ final class LeftoverScannerTests: XCTestCase {
         XCTAssertNil(match, "Short 2-letter app names must never trigger exact name folder matches")
     }
 
-    func testAppleSystemAppThrowsProtectedError() throws {
+    func testAppleSystemAppProtectedAgainstDeletion() throws {
         let systemAppInfo = AppInfo(
             bundleURL: URL(fileURLWithPath: "/System/Applications/Calculator.app"),
             bundleIdentifier: "com.apple.calculator",
@@ -98,7 +98,14 @@ final class LeftoverScannerTests: XCTestCase {
         )
 
         let scanner = LeftoverScanner(customHomeDirectory: sandbox.userHomeURL)
-        XCTAssertThrowsError(try scanner.scan(appInfo: systemAppInfo)) { error in
+        let guardInstance = SafetyGuard(customAllowedRoot: sandbox.rootURL)
+
+        // Read-only scan is allowed for inspection
+        let result = try scanner.scan(appInfo: systemAppInfo)
+        XCTAssertNotNil(result)
+
+        // But SafetyGuard strictly rejects deleting the system bundle
+        XCTAssertThrowsError(try guardInstance.validate(itemURL: systemAppInfo.bundleURL, for: systemAppInfo)) { error in
             guard let sweepError = error as? SweepError else {
                 XCTFail("Expected SweepError")
                 return

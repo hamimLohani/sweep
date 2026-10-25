@@ -43,12 +43,13 @@ Total Disk Space: 2.31 GB
 
 ## Quick Install
 
-Install in one command via [Homebrew](https://brew.sh):
+Install in a single command via [Homebrew](https://brew.sh):
 
 ```bash
-brew tap hamimlohani/tap
-brew install sweep
+brew install hamimlohani/tap/sweep
 ```
+
+*(Or add the tap first: `brew tap hamimlohani/tap && brew install sweep`)*
 
 To update `sweep` in the future:
 ```bash
@@ -182,7 +183,10 @@ macOS protects sensitive user data (like Mail and Safari caches) under Transpare
 Yes! `sweep scan` and `sweep remove` accept:
 - Application name: `sweep remove "Visual Studio Code"`
 - Bundle ID: `sweep remove com.microsoft.VSCode`
-- Direct path: `sweep remove /Applications/Visual\ Studio\ Code.app`
+- Direct path or tab-completed: `sweep remove /Applications/Visual\ Studio\ Code.app/` (handles trailing slashes and quotes automatically)
+
+### Does `sweep` support `NO_COLOR`?
+Yes! `sweep` fully adheres to the [NO_COLOR](https://no-color.org) standard (`export NO_COLOR=1`). When set, ANSI escape codes are omitted while preserving all interactive numbered selection menus.
 
 ### Can I safely clean caches for system apps like Safari?
 **Yes.** While `sweep` strictly prevents uninstalling sealed system apps (like Safari or Finder), you can safely clean their caches using `sweep remove cache "Safari"` or `sweep remove cache all`. This purges temporary WebKit data and Darwin user caches while leaving your bookmarks, browsing history, and preferences completely intact.
@@ -203,7 +207,10 @@ swift build
 # Run unit tests (runs in isolated temporary sandboxes)
 swift run sweep-tests
 
-# Build universal release binary (arm64 + x86_64)
+# Build optimized release binary
+swift build -c release
+
+# Build universal release binary (arm64 + x86_64, requires Xcode.app)
 swift build -c release --arch arm64 --arch x86_64
 ```
 

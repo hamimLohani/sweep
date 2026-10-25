@@ -4,6 +4,7 @@ public final class AppResolver {
     private let fileManager: FileManager
     private let receiptReader: ReceiptReading
     private let applicationDirectories: [URL]
+    private let customSearchDirectories: [URL]?
 
     public init(
         fileManager: FileManager = .default,
@@ -12,6 +13,7 @@ public final class AppResolver {
     ) {
         self.fileManager = fileManager
         self.receiptReader = receiptReader
+        self.customSearchDirectories = customSearchDirectories
 
         if let customDirs = customSearchDirectories {
             self.applicationDirectories = customDirs
@@ -30,21 +32,30 @@ public final class AppResolver {
 
     /// Resolves an application from a name, a path to .app, or a bundle identifier.
     public func resolve(target: String) throws -> AppInfo {
-        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        var cleanTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        while cleanTarget.hasSuffix("/") && cleanTarget.count > 1 {
+            cleanTarget.removeLast()
+        }
+        if (cleanTarget.hasPrefix("\"") && cleanTarget.hasSuffix("\"")) || (cleanTarget.hasPrefix("'") && cleanTarget.hasSuffix("'")) {
+            cleanTarget = String(cleanTarget.dropFirst().dropLast())
+            while cleanTarget.hasSuffix("/") && cleanTarget.count > 1 {
+                cleanTarget.removeLast()
+            }
+        }
+        guard !cleanTarget.isEmpty else {
             throw SweepError.invalidPath(target)
         }
 
-        let lower = trimmed.lowercased()
+        let lower = cleanTarget.lowercased()
 
         // Direct Core System app resolution for Safari and Finder
-        if lower == "finder" || lower == "com.apple.finder" {
+        if lower == "finder" || lower == "com.apple.finder" || lower == "finder.app" {
             let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
             if fileManager.fileExists(atPath: finderURL.path) {
                 return try parseAppBundle(at: finderURL, includeReceipts: false)
             }
         }
-        if lower == "safari" || lower == "com.apple.safari" {
+        if lower == "safari" || lower == "com.apple.safari" || lower == "safari.app" {
             let safariPaths = [
                 "/Applications/Safari.app",
                 "/System/Applications/Safari.app",
@@ -58,8 +69,8 @@ public final class AppResolver {
             }
         }
 
-        // Case 1: Check if target is an existing path to a .app bundle
-        let targetURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardized
+        // Case 1: Check if cleanTarget is an existing path to a .app bundle
+        let targetURL = URL(fileURLWithPath: (cleanTarget as NSString).expandingTildeInPath).standardized
         if targetURL.pathExtension == "app" && fileManager.fileExists(atPath: targetURL.path) {
             return try parseAppBundle(at: targetURL)
         }
@@ -68,12 +79,12 @@ public final class AppResolver {
         let installedApps = listInstalledApps()
 
         // 2A: Exact Bundle ID match
-        if let match = installedApps.first(where: { $0.bundleIdentifier.lowercased() == trimmed.lowercased() }) {
+        if let match = installedApps.first(where: { $0.bundleIdentifier.lowercased() == cleanTarget.lowercased() }) {
             return match
         }
 
         // 2B: Exact Name match (e.g. "Slack" or "Slack.app")
-        let targetName = trimmed.hasSuffix(".app") ? String(trimmed.dropLast(4)) : trimmed
+        let targetName = cleanTarget.hasSuffix(".app") ? String(cleanTarget.dropLast(4)) : cleanTarget
         if let match = installedApps.first(where: {
             $0.bundleName.lowercased() == targetName.lowercased() ||
             $0.displayName.lowercased() == targetName.lowercased() ||
@@ -102,19 +113,20 @@ public final class AppResolver {
             discoverApps(in: dir, currentDepth: 0, maxDepth: 2, results: &foundApps)
         }
 
-        // Include Finder if not discovered
-        let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
-        if fileManager.fileExists(atPath: finderURL.path), !foundApps.contains(where: { $0.bundleIdentifier == "com.apple.finder" }) {
-            if let finderInfo = try? parseAppBundle(at: finderURL, includeReceipts: false) {
-                foundApps.append(finderInfo)
+        // Include Finder and Safari if not discovered and not running in sandbox directory mode
+        if customSearchDirectories == nil {
+            let finderURL = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
+            if fileManager.fileExists(atPath: finderURL.path), !foundApps.contains(where: { $0.bundleIdentifier == "com.apple.finder" }) {
+                if let finderInfo = try? parseAppBundle(at: finderURL, includeReceipts: false) {
+                    foundApps.append(finderInfo)
+                }
             }
-        }
 
-        // Include Safari if not discovered
-        let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
-        if fileManager.fileExists(atPath: safariURL.path), !foundApps.contains(where: { $0.bundleIdentifier.lowercased() == "com.apple.safari" }) {
-            if let safariInfo = try? parseAppBundle(at: safariURL, includeReceipts: false) {
-                foundApps.append(safariInfo)
+            let safariURL = URL(fileURLWithPath: "/Applications/Safari.app")
+            if fileManager.fileExists(atPath: safariURL.path), !foundApps.contains(where: { $0.bundleIdentifier.lowercased() == "com.apple.safari" }) {
+                if let safariInfo = try? parseAppBundle(at: safariURL, includeReceipts: false) {
+                    foundApps.append(safariInfo)
+                }
             }
         }
 
@@ -194,7 +206,7 @@ public final class AppResolver {
 
     /// Extracts vendor token from reverse-DNS bundle identifier (e.g. com.tinyspeck.slackmacgap -> tinyspeck).
     public func extractVendorToken(from bundleID: String) -> String? {
-        let genericPrefixes: Set<String> = ["com", "org", "net", "io", "co", "app", "dev", "mac", "me", "us", "uk", "de", "fr", "apple"]
+        let genericPrefixes: Set<String> = ["com", "org", "net", "io", "co", "app", "dev", "mac", "me", "us", "uk", "de", "fr", "apple", "github", "gitlab", "info", "biz", "edu", "gov", "mil"]
         let parts = bundleID.split(separator: ".").map(String.init)
         guard parts.count >= 2 else { return nil }
 

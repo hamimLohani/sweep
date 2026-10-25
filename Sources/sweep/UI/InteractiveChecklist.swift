@@ -17,7 +17,7 @@ public final class InteractiveChecklist {
         }
 
         // If non-interactive or auto-confirmed with --yes, return immediately
-        if autoConfirm || !Terminal.isColorEnabled || isatty(STDIN_FILENO) != 1 {
+        if autoConfirm || isatty(STDIN_FILENO) != 1 || isatty(STDOUT_FILENO) != 1 {
             var result: [LeftoverItem] = []
             for (idx, item) in candidates.enumerated() {
                 if selectedState[idx] {
