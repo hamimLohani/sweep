@@ -66,10 +66,12 @@ public final class InteractiveChecklist {
                 selectedState = [Bool](repeating: true, count: candidates.count)
             } else if line == "n" || line == "none" {
                 selectedState = [Bool](repeating: false, count: candidates.count)
-            } else if let num = Int(line), num >= 1, num <= candidates.count {
-                selectedState[num - 1].toggle()
+            } else if let indices = parseToggleIndices(line, maxIndex: candidates.count) {
+                for idx in indices {
+                    selectedState[idx].toggle()
+                }
             } else {
-                print(Terminal.colorize("Invalid input. Type a number to toggle, or press Enter to proceed.", .yellow))
+                print(Terminal.colorize("Invalid input. Enter number(s) (e.g. 1, 1-3, 2,5), or press Enter to proceed.", .yellow))
             }
         }
 
@@ -80,5 +82,34 @@ public final class InteractiveChecklist {
             }
         }
         return selectedItems
+    }
+
+    private static func parseToggleIndices(_ input: String, maxIndex: Int) -> [Int]? {
+        var indices: [Int] = []
+        var seen = Set<Int>()
+        let parts = input.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !parts.isEmpty else { return nil }
+
+        for part in parts {
+            if part.contains("-") {
+                let bounds = part.split(separator: "-", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard bounds.count == 2,
+                      let start = Int(bounds[0]),
+                      let end = Int(bounds[1]),
+                      start >= 1, end <= maxIndex, start <= end else {
+                    return nil
+                }
+                for num in start...end where seen.insert(num - 1).inserted {
+                    indices.append(num - 1)
+                }
+            } else if let num = Int(part), num >= 1, num <= maxIndex {
+                if seen.insert(num - 1).inserted {
+                    indices.append(num - 1)
+                }
+            } else {
+                return nil
+            }
+        }
+        return indices.isEmpty ? nil : indices
     }
 }

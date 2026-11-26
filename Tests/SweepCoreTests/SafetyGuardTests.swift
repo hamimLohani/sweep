@@ -72,4 +72,16 @@ final class SafetyGuardTests: XCTestCase {
 
         XCTAssertNoThrow(try guardInstance.validate(itemURL: safeFile))
     }
+
+    func testPackagePathValidation() {
+        let realGuard = SafetyGuard()
+        XCTAssertThrowsError(try realGuard.validate(itemURL: URL(fileURLWithPath: "/usr/local")))
+        XCTAssertThrowsError(try realGuard.validate(itemURL: URL(fileURLWithPath: "/usr/local/bin")))
+        XCTAssertThrowsError(try realGuard.validate(itemURL: URL(fileURLWithPath: "/opt/homebrew")))
+        XCTAssertThrowsError(try realGuard.validate(itemURL: URL(fileURLWithPath: "/Library/Fonts")))
+        XCTAssertNoThrow(try realGuard.validate(itemURL: URL(fileURLWithPath: "/usr/local/bin/mytool")))
+        XCTAssertNoThrow(try realGuard.validate(itemURL: URL(fileURLWithPath: "/opt/vendor/mytool")))
+        XCTAssertTrue(SafetyGuard.isProtectedSystemPackage(packageID: "com.apple.files.data-template"))
+        XCTAssertFalse(SafetyGuard.isProtectedSystemPackage(packageID: "org.wireshark.ChmodBPF.pkg"))
+    }
 }

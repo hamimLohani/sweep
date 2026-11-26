@@ -1,5 +1,5 @@
 .\" Manual page for sweep
-.Dd September 28, 2026
+.Dd November 26, 2026
 .Dt SWEEP 1
 .Os
 .Sh NAME
@@ -30,6 +30,28 @@
 .Op Ar app | all
 .Op Fl -dry-run
 .Op Fl y | -yes
+.Op Fl -json
+.Nm
+.Cm pkg
+.Cm list
+.Op Fl a | -all
+.Op Fl f | -filter Ar query
+.Op Fl -json
+.Nm
+.Cm pkg
+.Cm scan
+.Ar pkg
+.Op Fl -files
+.Op Fl -json
+.Nm
+.Cm pkg
+.Cm remove
+.Ar pkg
+.Op Fl -dry-run
+.Op Fl y | -yes
+.Op Fl -permanent
+.Op Fl -include-low-confidence
+.Op Fl -keep-receipt
 .Op Fl -json
 .Nm
 .Cm doctor
@@ -103,6 +125,27 @@ caches across all installed applications are cleaned.
 Core system applications (such as Safari and Finder) are permitted for cache purging.
 All cache deletions require administrator authentication
 .Pq Xr sudo 8 .
+.It Cm pkg Cm list Op Fl a | -all Op Fl f | -filter Ar query Op Fl -json
+Lists macOS installer package receipts registered in the system receipt database via
+.Xr pkgutil 1 .
+By default, Apple packages
+.Pq Qq com.apple.*
+are omitted unless
+.Fl -all
+is specified.
+.It Cm pkg Cm scan Ar pkg Op Fl -files Op Fl -json
+Resolves a package identifier, installer filename, or unique name, inspects its receipt BOM via
+.Xr pkgutil 1 ,
+checks cross-package shared file ownership, collapses exclusive bundles/directories (unless
+.Fl -files
+is passed), and scans associated runtime leftovers.
+.Sy This subcommand deletes nothing.
+.It Cm pkg Cm remove Ar pkg Op Fl -dry-run Op Fl y | -yes Op Fl -permanent Op Fl -include-low-confidence Op Fl -keep-receipt Op Fl -json
+Safely uninstalls an installer package by removing exclusive package files and associated leftovers (preserving any files shared with other packages), unloading related LaunchAgents or LaunchDaemons, pruning empty package directories, and forgetting the receipt with
+.Ql pkgutil --forget
+unless
+.Fl -keep-receipt
+is passed.
 .It Cm doctor
 Runs diagnostic checks verifying Full Disk Access (FDA), macOS version
 compatibility (macOS 13.0+ required), User Trash permissions, System
@@ -127,6 +170,24 @@ Includes low-confidence candidates (such as generic vendor-prefixed
 directories) in the removal plan.
 By default, low-confidence items are excluded to prevent accidental
 removal of shared vendor resources.
+.It Fl -files
+For
+.Cm pkg scan ,
+expands collapsed bundles and package directories to show every individual file.
+.It Fl -keep-receipt
+For
+.Cm pkg remove ,
+removes selected package files and leftovers without running
+.Ql pkgutil --forget .
+.It Fl a , -all
+For
+.Cm pkg list ,
+includes Apple system and App Store package receipts
+.Pq Qq com.apple.* .
+.It Fl f , -filter Ar query
+For
+.Cm pkg list ,
+filters packages by identifier, filename, or display name.
 .It Fl -json
 Outputs structured JSON data instead of human-readable colored
 terminal output.
@@ -221,6 +282,18 @@ Clean cache files for a specific application (including core system apps like Sa
 Clean caches across all installed applications:
 .Pp
 .Dl $ sweep remove cache all
+.Pp
+List installed third-party installer packages:
+.Pp
+.Dl $ sweep pkg list
+.Pp
+Inspect files and shared dependencies for a package receipt:
+.Pp
+.Dl $ sweep pkg scan org.wireshark.ChmodBPF.pkg
+.Pp
+Simulate removing a package and forgetting its receipt:
+.Pp
+.Dl $ sweep pkg remove org.wireshark.ChmodBPF.pkg --dry-run --yes
 .Pp
 Check system permissions and Full Disk Access:
 .Pp

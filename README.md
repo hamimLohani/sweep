@@ -117,6 +117,22 @@ sweep remove cache --dry-run
 > [!NOTE]
 > Cache cleaning targets temporary caches (`~/Library/Caches`, Darwin caches, WebKit data, and sandbox container caches) while preserving all application binaries, user settings, preferences, and personal documents. Administrator privileges (`sudo`) are authenticated to purge system and Darwin cache directories cleanly.
 
+### 7. Manage & Uninstall `.pkg` Installer Packages
+```bash
+# List third-party .pkg installer receipts (use --all to include Apple packages)
+sweep pkg list
+sweep pkg list --all
+
+# Inspect files, shared files, and runtime leftovers for a package
+sweep pkg scan org.wireshark.ChmodBPF.pkg
+
+# Uninstall a .pkg package, clean leftovers, and forget its receipt
+sweep pkg remove org.wireshark.ChmodBPF.pkg
+sweep pkg remove org.wireshark.ChmodBPF.pkg --dry-run --yes
+```
+> [!NOTE]
+> `sweep pkg` checks cross-package ownership and preserves any files shared with other installed `.pkg` receipts, protects macOS system packages and structural roots (such as `/usr/local/bin` and `/opt/homebrew`), prunes empty directories, and runs `pkgutil --forget` once removal completes.
+
 ---
 
 ## Interactive Removal Checklist
@@ -154,6 +170,9 @@ Enter choice:
 | `sweep remove <app>` | Interactive uninstaller with checklist | `sweep remove "Discord"` |
 | `sweep remove cache [app]` | Purges app caches while preserving settings | `sweep remove cache "Safari"` |
 | `sweep remove cache all` | Purges caches across all installed applications | `sweep remove cache all` |
+| `sweep pkg list` | Lists installed `.pkg` package receipts | `sweep pkg list --all` |
+| `sweep pkg scan <pkg>` | Inspects `.pkg` files, shared files, and leftovers | `sweep pkg scan "ChmodBPF"` |
+| `sweep pkg remove <pkg>` | Uninstalls a `.pkg` package and forgets its receipt | `sweep pkg remove "ChmodBPF"` |
 | `sweep doctor` | Diagnoses permissions and system compatibility | `sweep doctor` |
 | `sweep --help` | Shows help instructions | `sweep --help` |
 | `sweep --version` | Displays installed version | `sweep --version` |

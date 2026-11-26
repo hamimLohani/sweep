@@ -21,14 +21,14 @@ public final class TrashRemover {
     private let fileManager: FileManager
     private let safetyGuard: SafetyGuard
     private let historyLogger: HistoryLogger
-    private let privilegeHandler: PrivilegeHandler
+    private let privilegeHandler: PrivilegeHandling
     private let processManager: ProcessManager
 
     public init(
         fileManager: FileManager = .default,
         safetyGuard: SafetyGuard? = nil,
         historyLogger: HistoryLogger? = nil,
-        privilegeHandler: PrivilegeHandler = .shared,
+        privilegeHandler: PrivilegeHandling = PrivilegeHandler.shared,
         processManager: ProcessManager = .shared
     ) {
         self.fileManager = fileManager
@@ -38,23 +38,18 @@ public final class TrashRemover {
         self.processManager = processManager
     }
 
-    /// Executes the removal plan item by item with defense-in-depth safety checks and audit logging
+    private struct Target {
+        let url: URL
+        let category: String
+        let sizeBytes: Int64
+        let requiresPrivilege: Bool
+    }
+
+    /// Executes the application removal plan item by item with defense-in-depth safety checks and audit logging
     public func execute(
         plan: RemovalPlan,
         onItemWillDelete: ((URL, String) -> Void)? = nil
     ) throws -> RemovalExecutionResult {
-        var itemRecords: [RemovalItemRecord] = []
-        var successful: [RemovalItemResult] = []
-        var failed: [RemovalItemResult] = []
-
-        // 1. Prepare target list: [app bundle] + selected leftover items
-        struct Target {
-            let url: URL
-            let category: String
-            let sizeBytes: Int64
-            let requiresPrivilege: Bool
-        }
-
         var targets: [Target] = [
             Target(
                 url: plan.appInfo.bundleURL,
@@ -73,13 +68,125 @@ public final class TrashRemover {
             ))
         }
 
-        // 2. Iterate through each target
+        let execution = executeTargets(
+            targets,
+            appInfo: plan.appInfo,
+            isPermanent: plan.isPermanent,
+            dryRun: plan.dryRun,
+            onItemWillDelete: onItemWillDelete
+        )
+
+        let record = RemovalRecord(
+            bundleIdentifier: plan.appInfo.bundleIdentifier,
+            appName: plan.appInfo.bundleName,
+            appVersion: plan.appInfo.version,
+            isPermanent: plan.isPermanent,
+            totalSizeBytes: plan.totalSizeBytes,
+            items: execution.records
+        )
+
+        if !plan.dryRun && !execution.records.isEmpty {
+            try? historyLogger.recordRemoval(record)
+        }
+
+        return RemovalExecutionResult(
+            successfulItems: execution.successful,
+            failedItems: execution.failed,
+            record: record
+        )
+    }
+
+    /// Executes a macOS package removal plan: removes selected package files/leftovers,
+    /// prunes empty package directories, and forgets the receipt via `pkgutil --forget`.
+    public func executePackageRemoval(
+        plan: PackageRemovalPlan,
+        receiptManager: ReceiptReading = ReceiptReader.shared,
+        onItemWillDelete: ((URL, String) -> Void)? = nil
+    ) throws -> PackageRemovalExecutionResult {
+        if plan.packageInfo.isProtectedSystemPackage ||
+           SafetyGuard.isProtectedSystemPackage(packageID: plan.packageInfo.packageIdentifier) {
+            throw SweepError.protectedSystemComponent(
+                "Package '\(plan.packageInfo.packageIdentifier)' is a core macOS system package and cannot be uninstalled."
+            )
+        }
+
+        let targets = plan.selectedItems.map { item in
+            Target(
+                url: item.url,
+                category: item.category,
+                sizeBytes: item.sizeBytes,
+                requiresPrivilege: item.requiresPrivilege
+            )
+        }
+
+        let execution = executeTargets(
+            targets,
+            appInfo: nil,
+            isPermanent: plan.isPermanent,
+            dryRun: plan.dryRun,
+            onItemWillDelete: onItemWillDelete
+        )
+
+        var prunedDirectories: [URL] = []
+        var receiptForgotten = false
+        var receiptForgetError: String?
+
+        if !plan.dryRun {
+            prunedDirectories = pruneEmptyDirectories(plan.candidateEmptyDirectories)
+
+            if !plan.keepReceipt && execution.failed.isEmpty {
+                do {
+                    try receiptManager.forgetPackage(plan.packageInfo.packageIdentifier)
+                    receiptForgotten = true
+                } catch {
+                    receiptForgetError = error.localizedDescription
+                }
+            }
+        }
+
+        let record = RemovalRecord(
+            bundleIdentifier: plan.packageInfo.packageIdentifier,
+            appName: "\(plan.packageInfo.displayName) (Package)",
+            appVersion: plan.packageInfo.version,
+            isPermanent: plan.isPermanent,
+            totalSizeBytes: plan.totalSizeBytes,
+            items: execution.records,
+            forgottenPackageID: receiptForgotten ? plan.packageInfo.packageIdentifier : nil
+        )
+
+        if !plan.dryRun && (!execution.records.isEmpty || receiptForgotten) {
+            try? historyLogger.recordRemoval(record)
+        }
+
+        return PackageRemovalExecutionResult(
+            successfulItems: execution.successful,
+            failedItems: execution.failed,
+            prunedDirectories: prunedDirectories,
+            receiptForgotten: receiptForgotten,
+            receiptForgetError: receiptForgetError,
+            record: record
+        )
+    }
+
+    // MARK: - Shared Removal Execution
+
+    private func executeTargets(
+        _ targets: [Target],
+        appInfo: AppInfo?,
+        isPermanent: Bool,
+        dryRun: Bool,
+        onItemWillDelete: ((URL, String) -> Void)?
+    ) -> (successful: [RemovalItemResult], failed: [RemovalItemResult], records: [RemovalItemRecord]) {
+        var itemRecords: [RemovalItemRecord] = []
+        var successful: [RemovalItemResult] = []
+        var failed: [RemovalItemResult] = []
+
         for target in targets {
             let itemURL = target.url
 
             // Re-validate against safety invariants immediately before taking action
             do {
-                try safetyGuard.validate(itemURL: itemURL, for: plan.appInfo)
+                try safetyGuard.validate(itemURL: itemURL, for: appInfo)
             } catch {
                 failed.append(RemovalItemResult(
                     url: itemURL,
@@ -93,8 +200,7 @@ public final class TrashRemover {
             // Notify user of the exact deleting file path BEFORE deletion
             onItemWillDelete?(itemURL, target.category)
 
-            // If dry run, record success without filesystem modification
-            if plan.dryRun {
+            if dryRun {
                 successful.append(RemovalItemResult(url: itemURL, success: true, trashURL: nil, errorMessage: nil))
                 continue
             }
@@ -105,28 +211,28 @@ public final class TrashRemover {
                 _ = processManager.unloadLaunchAgentOrDaemon(at: itemURL, isDaemon: isDaemon)
             }
 
-            // Execute deletion
             var trashResultURL: NSURL?
             var deletionSucceeded = false
             var errorDetails: String?
 
             do {
                 if (target.requiresPrivilege || !privilegeHandler.canWrite(to: itemURL)) && !privilegeHandler.isRoot {
-                    // System-owned file requiring sudo
                     try privilegeHandler.removeWithPrivilege(at: itemURL)
                     deletionSucceeded = true
-                } else if plan.isPermanent {
-                    // Permanent deletion via rm
+                } else if isPermanent {
                     try fileManager.removeItem(at: itemURL)
                     deletionSucceeded = true
                 } else {
-                    // Safe move to Trash
                     do {
                         try fileManager.trashItem(at: itemURL, resultingItemURL: &trashResultURL)
                         deletionSucceeded = true
                     } catch {
-                        // If moving to trash failed due to permission/ownership, attempt privileged removal
-                        if !privilegeHandler.canWrite(to: itemURL) || (error as NSError).domain == NSCocoaErrorDomain {
+                        var st = stat()
+                        let isSymlink = lstat(itemURL.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFLNK
+                        if isSymlink {
+                            try fileManager.removeItem(at: itemURL)
+                            deletionSucceeded = true
+                        } else if !privilegeHandler.canWrite(to: itemURL) || (error as NSError).domain == NSCocoaErrorDomain {
                             try privilegeHandler.authenticateIfNeeded()
                             try privilegeHandler.removeWithPrivilege(at: itemURL)
                             deletionSucceeded = true
@@ -154,20 +260,41 @@ public final class TrashRemover {
             }
         }
 
-        // 3. Record removal transaction in history manifest
-        let record = RemovalRecord(
-            bundleIdentifier: plan.appInfo.bundleIdentifier,
-            appName: plan.appInfo.bundleName,
-            appVersion: plan.appInfo.version,
-            isPermanent: plan.isPermanent,
-            totalSizeBytes: plan.totalSizeBytes,
-            items: itemRecords
-        )
+        return (successful, failed, itemRecords)
+    }
 
-        if !plan.dryRun && !itemRecords.isEmpty {
-            try? historyLogger.recordRemoval(record)
+    private func pruneEmptyDirectories(_ directories: [URL]) -> [URL] {
+        var pruned: [URL] = []
+        let sorted = directories.sorted { $0.pathComponents.count > $1.pathComponents.count }
+
+        for dirURL in sorted {
+            do {
+                try safetyGuard.validate(itemURL: dirURL)
+            } catch {
+                continue
+            }
+
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: dirURL.path, isDirectory: &isDir), isDir.boolValue else {
+                continue
+            }
+
+            guard let contents = try? fileManager.contentsOfDirectory(atPath: dirURL.path), contents.isEmpty else {
+                continue
+            }
+
+            do {
+                if !privilegeHandler.canWrite(to: dirURL) && !privilegeHandler.isRoot {
+                    try privilegeHandler.removeWithPrivilege(at: dirURL)
+                } else {
+                    try fileManager.removeItem(at: dirURL)
+                }
+                pruned.append(dirURL)
+            } catch {
+                continue
+            }
         }
 
-        return RemovalExecutionResult(successfulItems: successful, failedItems: failed, record: record)
+        return pruned
     }
 }

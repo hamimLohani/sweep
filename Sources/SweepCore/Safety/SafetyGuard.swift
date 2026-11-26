@@ -13,7 +13,15 @@ public final class SafetyGuard {
     public static let strictDenylist: [String] = [
         "/",
         "/System",
-        "/usr",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/lib",
+        "/usr/libexec",
+        "/usr/share",
+        "/usr/include",
+        "/usr/standalone",
+        "/usr/X11",
+        "/usr/X11R6",
         "/bin",
         "/sbin",
         "/private/etc",
@@ -23,6 +31,7 @@ public final class SafetyGuard {
         "/Library/Application Support/Apple",
         "/Library/SystemExtensions",
         "/Library/Keychains",
+        "/Library/Receipts",
         "/System/Library",
         "/System/Volumes"
     ]
@@ -39,7 +48,7 @@ public final class SafetyGuard {
         "Library/Application Support/Apple"
     ]
 
-    /// Structural directory roots that can NEVER be deleted itself as a leftover
+    /// Structural directory roots that can NEVER be deleted itself as a leftover or package root
     public static let protectedRootFolderNames: Set<String> = [
         "Library",
         "Application Support",
@@ -56,7 +65,38 @@ public final class SafetyGuard {
         "LaunchDaemons",
         "PrivilegedHelperTools",
         "Application Scripts",
-        "Applications"
+        "Applications",
+        "Extensions",
+        "Frameworks",
+        "Java",
+        "JavaVirtualMachines",
+        "Input Methods",
+        "PreferencePanes",
+        "Internet Plug-Ins",
+        "Fonts",
+        "Receipts",
+        "Utilities"
+    ]
+
+    /// Structural directories under /usr/local and /opt that must NEVER be deleted as a whole
+    public static let protectedPackageRootSubdirs: Set<String> = [
+        "local",
+        "bin",
+        "sbin",
+        "lib",
+        "libexec",
+        "share",
+        "man",
+        "doc",
+        "info",
+        "include",
+        "etc",
+        "var",
+        "opt",
+        "Cellar",
+        "Caskroom",
+        "Homebrew",
+        "homebrew"
     ]
 
     /// Apple essential core system apps that can NEVER be deleted
@@ -69,6 +109,33 @@ public final class SafetyGuard {
         "com.apple.appstore",
         "com.apple.launchd"
     ]
+
+    /// Package identifier prefixes belonging to core macOS system/security/template receipts
+    public static let protectedSystemPackagePrefixes: [String] = [
+        "com.apple.files.",
+        "com.apple.cdm.pkg.setupmacos",
+        "com.apple.pkg.coretypes",
+        "com.apple.pkg.xprotect",
+        "com.apple.pkg.mrtconfigdata",
+        "com.apple.pkg.gatekeepercompatibilitydata",
+        "com.apple.pkg.mobileassets",
+        "com.apple.pkg.mobiledevice",
+        "com.apple.pkg.rosetta",
+        "com.apple.pkg.macos",
+        "com.apple.pkg.basesystem",
+        "com.apple.pkg.essentials",
+        "com.apple.pkg.safari",
+        "com.apple.pkg.finder",
+        "com.apple.pkg.firmware",
+        "com.apple.pkg.bridgeos",
+        "com.apple.pkg.xcodesystemresources"
+    ]
+
+    /// Checks if a package identifier refers to a core macOS system package that must not be uninstalled
+    public static func isProtectedSystemPackage(packageID: String) -> Bool {
+        let lower = packageID.lowercased()
+        return protectedSystemPackagePrefixes.contains { lower.hasPrefix($0) }
+    }
 
     /// Checks if an app is a sealed core macOS system application
     public static func isProtectedSystemApp(bundleIdentifier: String, bundleURL: URL) -> Bool {
@@ -110,19 +177,46 @@ public final class SafetyGuard {
 
         // Check 3: Cannot delete protected structural root directories
         let lastComponent = itemURL.lastPathComponent
+        let parentURL = itemURL.deletingLastPathComponent()
+        let parent = parentURL.lastPathComponent
+        let grandParent = parentURL.deletingLastPathComponent().lastPathComponent
+
         if Self.protectedRootFolderNames.contains(lastComponent) {
-            // Check if the item IS the root folder itself rather than a sub-item
-            let parentURL = itemURL.deletingLastPathComponent()
-            let parent = parentURL.lastPathComponent
-            let grandParent = parentURL.deletingLastPathComponent().lastPathComponent
-            if lastComponent == "Library" || lastComponent == "Applications" || parent == "Library" || parent == "Users" || parent == "/" || grandParent == "Users" || parent.hasSuffix("Home") {
+            if lastComponent == "Library" ||
+               lastComponent == "Applications" ||
+               parent == "Library" ||
+               (grandParent == "Library" && lastComponent == "JavaVirtualMachines") ||
+               (parent == "Applications" && lastComponent == "Utilities") ||
+               parent == "Users" ||
+               parent == "/" ||
+               grandParent == "Users" ||
+               parent.hasSuffix("Home") {
                 throw SweepError.protectedSystemComponent("Cannot delete system structural root folder: '\(rawPath)'.")
             }
+        }
+
+        if Self.protectedPackageRootSubdirs.contains(lastComponent) {
+            if (parent == "local" && grandParent == "usr") ||
+               (parent == "share" && grandParent == "local") ||
+               parent == "opt" ||
+               (parent == "/" && (lastComponent == "opt" || lastComponent == "usr")) {
+                throw SweepError.protectedSystemComponent("Cannot delete package structural root folder: '\(rawPath)'.")
+            }
+        }
+        if parent == "man" && grandParent == "share" && lastComponent.hasPrefix("man") {
+            throw SweepError.protectedSystemComponent("Cannot delete manual section directory: '\(rawPath)'.")
         }
 
         // Check 4: Symlink traversal & canonical path resolution
         let canonicalURL = itemURL.resolvingSymlinksInPath().standardized
         let canonicalPath = canonicalURL.path
+
+        if canonicalPath == "/usr" ||
+           canonicalPath == "/usr/local" ||
+           canonicalPath == "/opt" ||
+           (canonicalPath.hasPrefix("/usr/") && !canonicalPath.hasPrefix("/usr/local/")) {
+            throw SweepError.protectedSystemComponent("Path is protected by macOS System Integrity: '\(rawPath)'.")
+        }
 
         // Check 5: Strict system denylist
         for denied in Self.strictDenylist {
@@ -162,9 +256,11 @@ public final class SafetyGuard {
         let isInsideApplications = canonicalPath.hasPrefix("/Applications/") || canonicalPath.hasPrefix("/System/Volumes/Data/Applications/")
         let isInsideLibrary = canonicalPath.hasPrefix("/Library/") || canonicalPath.hasPrefix("/System/Volumes/Data/Library/")
         let isInsideDarwin = canonicalPath.hasPrefix("/private/var/folders/") || canonicalPath.hasPrefix("/var/folders/")
+        let isInsideUsrLocal = !isCacheOnly && canonicalPath.hasPrefix("/usr/local/")
+        let isInsideOpt = !isCacheOnly && canonicalPath.hasPrefix("/opt/")
 
-        guard isInsideHome || isInsideApplications || isInsideLibrary || isInsideDarwin else {
-            throw SweepError.protectedSystemComponent("Path '\(rawPath)' is outside allowed macOS application and user domains.")
+        guard isInsideHome || isInsideApplications || isInsideLibrary || isInsideDarwin || isInsideUsrLocal || isInsideOpt else {
+            throw SweepError.protectedSystemComponent("Path '\(rawPath)' is outside allowed macOS application, package, and user domains.")
         }
     }
 }

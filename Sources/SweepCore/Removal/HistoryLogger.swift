@@ -23,6 +23,7 @@ public struct RemovalRecord: Codable, Equatable {
     public let isPermanent: Bool
     public let totalSizeBytes: Int64
     public let items: [RemovalItemRecord]
+    public let forgottenPackageID: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -32,7 +33,8 @@ public struct RemovalRecord: Codable, Equatable {
         appVersion: String?,
         isPermanent: Bool,
         totalSizeBytes: Int64,
-        items: [RemovalItemRecord]
+        items: [RemovalItemRecord],
+        forgottenPackageID: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -42,6 +44,7 @@ public struct RemovalRecord: Codable, Equatable {
         self.isPermanent = isPermanent
         self.totalSizeBytes = totalSizeBytes
         self.items = items
+        self.forgottenPackageID = forgottenPackageID
     }
 }
 

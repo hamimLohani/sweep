@@ -299,5 +299,376 @@ do {
     fail("CacheScannerTests", "\(error)")
 }
 
+// MARK: - Package Handling Test Doubles
+final class StubPrivilegeHandler: PrivilegeHandling {
+    var isRoot: Bool = false
+    var writableOverride: Bool = true
+    var forgottenPackages: [String] = []
+    var shouldFailForget: Bool = false
+
+    func canWrite(to url: URL) -> Bool {
+        return writableOverride
+    }
+    func hasCachedSudo() -> Bool { true }
+    func authenticateIfNeeded() throws {}
+    func removeWithPrivilege(at url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+    }
+    func forgetPackageReceipt(_ packageID: String) throws {
+        if shouldFailForget {
+            throw SweepError.executionFailed("Simulated pkgutil --forget failure")
+        }
+        forgottenPackages.append(packageID)
+    }
+}
+
+final class StubReceiptReader: ReceiptReading {
+    var packages: [String: PackageInfo] = [:]
+    var contentsMap: [String: PackageContents] = [:]
+    var forgotten: [String] = []
+    var failForget: Bool = false
+
+    func allPackages() -> [String] {
+        return Array(packages.keys).sorted()
+    }
+
+    func packageInfo(for pkgID: String, includeGroups: Bool) -> PackageInfo? {
+        return packages[pkgID]
+    }
+
+    func packageContents(for pkgID: String) -> PackageContents {
+        return contentsMap[pkgID] ?? PackageContents(files: [], directories: [])
+    }
+
+    func inspectOwnership(for pkgID: String, candidateFiles: [URL], candidateDirectories: [URL]) -> PackageOwnershipReport {
+        let candidateFileSet = Set(candidateFiles.map { $0.standardized.path })
+        let candidateDirSet = Set(candidateDirectories.map { $0.standardized.path })
+
+        var sharedFiles: [String: [String]] = [:]
+        var dirsWithOtherOwners = Set<String>()
+
+        for (otherID, contents) in contentsMap where otherID != pkgID {
+            for otherFile in contents.files {
+                let path = otherFile.standardized.path
+                if candidateFileSet.contains(path) {
+                    sharedFiles[path, default: []].append(otherID)
+                }
+                for dirPath in candidateDirSet {
+                    if path.hasPrefix(dirPath + "/") {
+                        dirsWithOtherOwners.insert(dirPath)
+                    }
+                }
+            }
+        }
+
+        return PackageOwnershipReport(
+            sharedFiles: sharedFiles.mapValues { $0.sorted() },
+            directoriesWithOtherOwners: dirsWithOtherOwners
+        )
+    }
+
+    func forgetPackage(_ pkgID: String) throws {
+        if failForget {
+            throw SweepError.executionFailed("Simulated forget error")
+        }
+        forgotten.append(pkgID)
+        packages.removeValue(forKey: pkgID)
+        contentsMap.removeValue(forKey: pkgID)
+    }
+
+    func findPackages(matching bundleID: String, appName: String) -> [String] {
+        return allPackages().filter { $0.lowercased().contains(bundleID.lowercased()) }
+    }
+
+    func filesForPackage(_ pkgID: String) -> [URL] {
+        return packageContents(for: pkgID).files
+    }
+}
+
+// Suite 5: PackageSafetyGuardTests
+print("\n\u{001B}[1;34m▶ Suite: PackageSafetyGuardTests\u{001B}[0m")
+do {
+    let realGuard = SafetyGuard()
+
+    let blockedPackagePaths = [
+        "/usr",
+        "/usr/bin",
+        "/usr/bin/swift",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/local",
+        "/usr/local/bin",
+        "/usr/local/lib",
+        "/usr/local/share/man",
+        "/usr/local/share/man/man1",
+        "/opt",
+        "/opt/homebrew",
+        "/opt/local",
+        "/Library/Fonts",
+        "/Library/Input Methods",
+        "/Library/Java/JavaVirtualMachines",
+        "/Library/Receipts"
+    ]
+    for path in blockedPackagePaths {
+        assertThrows({ try realGuard.validate(itemURL: URL(fileURLWithPath: path)) }, "SafetyGuard rejects protected package path \(path)")
+    }
+
+    let allowedPackagePaths = [
+        "/usr/local/bin/ghostscript",
+        "/usr/local/mysql-9.3.0-macos15-arm64/bin/mysql",
+        "/usr/local/share/ghostscript/10.07.0",
+        "/opt/mytool/bin/cli",
+        "/Library/Java/JavaVirtualMachines/temurin-17.jdk",
+        "/Library/Fonts/CustomFont.ttf",
+        "/Library/LaunchDaemons/org.example.daemon.plist"
+    ]
+    for path in allowedPackagePaths {
+        do {
+            try realGuard.validate(itemURL: URL(fileURLWithPath: path))
+            pass("SafetyGuard accepts valid package path \(path)")
+        } catch {
+            fail("SafetyGuard valid package path \(path)", "\(error)")
+        }
+    }
+
+    // Cache mode must still disallow /usr/local and /opt
+    assertThrows({
+        try realGuard.validate(itemURL: URL(fileURLWithPath: "/usr/local/bin/ghostscript"), isCacheOnly: true)
+    }, "SafetyGuard blocks /usr/local in cache-only mode")
+    assertThrows({
+        try realGuard.validate(itemURL: URL(fileURLWithPath: "/opt/mytool/cache"), isCacheOnly: true)
+    }, "SafetyGuard blocks /opt in cache-only mode")
+
+    assert(SafetyGuard.isProtectedSystemPackage(packageID: "com.apple.files.data-template"), "System package com.apple.files.data-template is protected")
+    assert(SafetyGuard.isProtectedSystemPackage(packageID: "com.apple.pkg.XProtectPayloads_10_15.16U4464"), "System package XProtect is protected")
+    assert(!SafetyGuard.isProtectedSystemPackage(packageID: "org.wireshark.ChmodBPF.pkg"), "Third-party package ChmodBPF is not protected")
+}
+
+// Suite 6: PackageResolverTests
+print("\n\u{001B}[1;34m▶ Suite: PackageResolverTests\u{001B}[0m")
+do {
+    let stub = StubReceiptReader()
+    stub.packages = [
+        "com.apple.files.data-template": PackageInfo(packageIdentifier: "com.apple.files.data-template", version: "27.2.1"),
+        "org.wireshark.ChmodBPF.pkg": PackageInfo(packageIdentifier: "org.wireshark.ChmodBPF.pkg", version: "1.2", packageFileName: "ChmodBPF.pkg"),
+        "org.tug.mactex.ghostscript10.03.0": PackageInfo(packageIdentifier: "org.tug.mactex.ghostscript10.03.0", version: "10.03.0", packageFileName: "Ghostscript-10.03.0.pkg"),
+        "org.tug.mactex.ghostscript10.07.0": PackageInfo(packageIdentifier: "org.tug.mactex.ghostscript10.07.0", version: "10.07.0", packageFileName: "Ghostscript-10.07.0.pkg"),
+        "net.temurin.17.jdk": PackageInfo(packageIdentifier: "net.temurin.17.jdk", version: "17.0.14+7", installLocation: "Library/Java/JavaVirtualMachines/temurin-17.jdk")
+    ]
+
+    let resolver = PackageResolver(receiptReader: stub)
+    let thirdParty = resolver.listInstalledPackages(includeApple: false)
+    assert(thirdParty.count == 4, "listInstalledPackages excludes Apple packages by default")
+
+    let allPkgs = resolver.listInstalledPackages(includeApple: true)
+    assert(allPkgs.count == 5, "listInstalledPackages --all includes Apple packages")
+
+    let filtered = resolver.listInstalledPackages(includeApple: false, filter: "temurin")
+    assert(filtered.count == 1 && filtered[0].packageIdentifier == "net.temurin.17.jdk", "listInstalledPackages filter matches package")
+
+    let exact = try resolver.resolve(target: "ORG.WIRESHARK.CHMODBPF.PKG")
+    assert(exact.packageIdentifier == "org.wireshark.ChmodBPF.pkg", "Resolve exact package ID case-insensitively")
+
+    let bySegment = try resolver.resolve(target: "ChmodBPF")
+    assert(bySegment.packageIdentifier == "org.wireshark.ChmodBPF.pkg", "Resolve by trailing segment")
+
+    let byFilename = try resolver.resolve(target: "Ghostscript-10.03.0.pkg")
+    assert(byFilename.packageIdentifier == "org.tug.mactex.ghostscript10.03.0", "Resolve by installer filename")
+
+    let bySubstring = try resolver.resolve(target: "temurin")
+    assert(bySubstring.packageIdentifier == "net.temurin.17.jdk", "Resolve by unique substring")
+
+    assertThrows({ try resolver.resolve(target: "ghostscript") }, "Ambiguous package query throws error")
+    assertThrows({ try resolver.resolve(target: "nonexistent.pkg") }, "Unknown package query throws packageNotFound")
+} catch {
+    fail("PackageResolverTests", "\(error)")
+}
+
+// Suite 7: PackageScannerTests
+print("\n\u{001B}[1;34m▶ Suite: PackageScannerTests\u{001B}[0m")
+do {
+    let sandbox = try TestSandbox()
+    defer { sandbox.cleanUp() }
+
+    let fm = FileManager.default
+    let usrLocalBin = sandbox.rootURL.appendingPathComponent("usr/local/bin")
+    let docDir = sandbox.rootURL.appendingPathComponent("usr/local/share/tool/1.0")
+    let dataToolDir = sandbox.rootURL.appendingPathComponent("usr/local/mytool")
+    let jdkBundle = sandbox.rootURL.appendingPathComponent("Library/Java/JavaVirtualMachines/demo-17.jdk")
+
+    try fm.createDirectory(at: usrLocalBin, withIntermediateDirectories: true)
+    try fm.createDirectory(at: docDir, withIntermediateDirectories: true)
+    try fm.createDirectory(at: dataToolDir.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: dataToolDir.appendingPathComponent("data"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: jdkBundle.appendingPathComponent("Contents/Home/bin"), withIntermediateDirectories: true)
+
+    let sharedBin = usrLocalBin.appendingPathComponent("shared-cli")
+    let exclusiveBin = usrLocalBin.appendingPathComponent("exclusive-cli")
+    let docFile = docDir.appendingPathComponent("README.txt")
+    let toolExec = dataToolDir.appendingPathComponent("bin/mytool")
+    let runtimeUserData = dataToolDir.appendingPathComponent("data/prod.db")
+    let jdkExec = jdkBundle.appendingPathComponent("Contents/Home/bin/java")
+    let missingFile = usrLocalBin.appendingPathComponent("already-deleted")
+    let runtimePref = sandbox.userLibraryURL.appendingPathComponent("Preferences/com.example.pkgtool.plist")
+
+    try "shared".write(to: sharedBin, atomically: true, encoding: .utf8)
+    try "exclusive".write(to: exclusiveBin, atomically: true, encoding: .utf8)
+    try "doc".write(to: docFile, atomically: true, encoding: .utf8)
+    try "exec".write(to: toolExec, atomically: true, encoding: .utf8)
+    try "IMPORTANT-USER-DB".write(to: runtimeUserData, atomically: true, encoding: .utf8)
+    try "java".write(to: jdkExec, atomically: true, encoding: .utf8)
+    try "pref".write(to: runtimePref, atomically: true, encoding: .utf8)
+
+    let pkgA = PackageInfo(packageIdentifier: "com.example.pkgtool", version: "1.0.0", installLocation: "/")
+    let pkgB = PackageInfo(packageIdentifier: "com.other.sibling", version: "2.0.0", installLocation: "/")
+
+    let stub = StubReceiptReader()
+    stub.packages = [
+        pkgA.packageIdentifier: pkgA,
+        pkgB.packageIdentifier: pkgB
+    ]
+    stub.contentsMap[pkgA.packageIdentifier] = PackageContents(
+        files: [sharedBin, exclusiveBin, docFile, toolExec, jdkExec, missingFile, URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")],
+        directories: [usrLocalBin, docDir, dataToolDir, dataToolDir.appendingPathComponent("bin"), jdkBundle]
+    )
+    stub.contentsMap[pkgB.packageIdentifier] = PackageContents(
+        files: [sharedBin],
+        directories: [usrLocalBin]
+    )
+
+    let guardInstance = SafetyGuard(customAllowedRoot: sandbox.rootURL)
+    let scanner = PackageScanner(
+        fileManager: fm,
+        receiptReader: stub,
+        safetyGuard: guardInstance,
+        privilegeHandler: StubPrivilegeHandler(),
+        customHomeDirectory: sandbox.userHomeURL
+    )
+
+    let scanResult = try scanner.scan(packageInfo: pkgA)
+
+    // Shared file must NOT be in removable items, and MUST be in sharedFiles
+    assert(!scanResult.items.contains { $0.url.standardized.path == sharedBin.standardized.path }, "Shared file excluded from removal candidates")
+    assert(scanResult.sharedFiles.contains { $0.url.standardized.path == sharedBin.standardized.path && $0.sharedWithPackages == [pkgB.packageIdentifier] }, "Shared file recorded with owning sibling package")
+
+    // Missing & protected files tracked accurately
+    assert(scanResult.missingFilePaths.contains { $0.standardized.path == missingFile.standardized.path }, "Missing file tracked in missingFilePaths")
+    assert(scanResult.protectedSkippedPaths.contains { $0.path == "/System/Library/CoreServices/Finder.app" }, "System path excluded in protectedSkippedPaths")
+
+    // Bundle collapse: .jdk and clean docDir collapsed; mytool (which has runtimeUserData!) NOT collapsed
+    assert(scanResult.items.contains { $0.url.standardized.path == jdkBundle.standardized.path }, "Exclusive .jdk bundle collapsed into single item")
+    assert(scanResult.items.contains { $0.url.standardized.path == docDir.standardized.path }, "Receipt-only directory collapsed into single item")
+    assert(!scanResult.items.contains { $0.url.standardized.path == dataToolDir.standardized.path }, "Directory with untracked runtime user data is NOT collapsed")
+    assert(scanResult.items.contains { $0.url.standardized.path == dataToolDir.appendingPathComponent("bin").standardized.path }, "Purely receipt-owned subdirectory 'bin' IS collapsed while preserving sibling 'data/'")
+    assert(scanResult.items.contains { $0.url.standardized.path == exclusiveBin.standardized.path }, "Exclusive binary in shared bin directory is listed")
+    assert(scanResult.items.contains { $0.url.resolvingSymlinksInPath().standardized.path == runtimePref.resolvingSymlinksInPath().standardized.path }, "Associated runtime preference leftover detected")
+
+    // Expand mode should list individual files instead of collapsing
+    let expanded = try scanner.scan(packageInfo: pkgA, expandCollapsedDirectories: true)
+    assert(expanded.items.contains { $0.url.standardized.path == jdkExec.standardized.path }, "Expanded scan lists individual file inside .jdk bundle")
+    assert(expanded.items.contains { $0.url.standardized.path == docFile.standardized.path }, "Expanded scan lists individual file inside docDir")
+    assert(expanded.items.contains { $0.url.standardized.path == toolExec.standardized.path }, "Expanded scan lists tracked binary inside subdirectory")
+} catch {
+    fail("PackageScannerTests", "\(error)")
+}
+
+// Suite 8: PackageRemoverTests
+print("\n\u{001B}[1;34m▶ Suite: PackageRemoverTests\u{001B}[0m")
+do {
+    let sandbox = try TestSandbox()
+    defer { sandbox.cleanUp() }
+
+    let fm = FileManager.default
+    let usrLocalBin = sandbox.rootURL.appendingPathComponent("usr/local/bin")
+    let dataToolDir = sandbox.rootURL.appendingPathComponent("usr/local/mytool")
+    let historyURL = sandbox.rootURL.appendingPathComponent("history.json")
+    try fm.createDirectory(at: usrLocalBin, withIntermediateDirectories: true)
+    try fm.createDirectory(at: dataToolDir.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: dataToolDir.appendingPathComponent("data"), withIntermediateDirectories: true)
+
+    let sharedBin = usrLocalBin.appendingPathComponent("shared-cli")
+    let exclusiveBin = usrLocalBin.appendingPathComponent("exclusive-cli")
+    let toolExec = dataToolDir.appendingPathComponent("bin/mytool")
+    let runtimeUserData = dataToolDir.appendingPathComponent("data/prod.db")
+
+    try "shared".write(to: sharedBin, atomically: true, encoding: .utf8)
+    try "exclusive".write(to: exclusiveBin, atomically: true, encoding: .utf8)
+    try "exec".write(to: toolExec, atomically: true, encoding: .utf8)
+    try "IMPORTANT-USER-DB".write(to: runtimeUserData, atomically: true, encoding: .utf8)
+
+    let pkgA = PackageInfo(packageIdentifier: "com.example.pkgtool", version: "1.0.0", installLocation: "/")
+    let pkgB = PackageInfo(packageIdentifier: "com.other.sibling", version: "2.0.0", installLocation: "/")
+
+    let stub = StubReceiptReader()
+    stub.packages = [pkgA.packageIdentifier: pkgA, pkgB.packageIdentifier: pkgB]
+    stub.contentsMap[pkgA.packageIdentifier] = PackageContents(
+        files: [sharedBin, exclusiveBin, toolExec],
+        directories: [usrLocalBin, dataToolDir, dataToolDir.appendingPathComponent("bin")]
+    )
+    stub.contentsMap[pkgB.packageIdentifier] = PackageContents(
+        files: [sharedBin],
+        directories: [usrLocalBin]
+    )
+
+    let guardInstance = SafetyGuard(customAllowedRoot: sandbox.rootURL)
+    let privStub = StubPrivilegeHandler()
+    let historyLogger = HistoryLogger(fileManager: fm, customManifestURL: historyURL)
+    let scanner = PackageScanner(
+        fileManager: fm,
+        receiptReader: stub,
+        safetyGuard: guardInstance,
+        privilegeHandler: privStub,
+        customHomeDirectory: sandbox.userHomeURL
+    )
+    let remover = TrashRemover(
+        fileManager: fm,
+        safetyGuard: guardInstance,
+        historyLogger: historyLogger,
+        privilegeHandler: privStub
+    )
+
+    let scanResult = try scanner.scan(packageInfo: pkgA)
+
+    // 1. Dry-run must leave everything intact
+    let dryPlan = PackageRemovalPlan(
+        packageInfo: pkgA,
+        selectedItems: scanResult.items,
+        candidateEmptyDirectories: scanResult.candidateEmptyDirectories,
+        isPermanent: true,
+        dryRun: true
+    )
+    let dryRes = try remover.executePackageRemoval(plan: dryPlan, receiptManager: stub)
+    assert(dryRes.isCompleteSuccess && !dryRes.receiptForgotten, "Dry-run package removal succeeds without forgetting receipt")
+    assert(fm.fileExists(atPath: exclusiveBin.path) && fm.fileExists(atPath: toolExec.path), "Dry-run leaves all files untouched")
+    assert(!fm.fileExists(atPath: historyURL.path), "Dry-run does not write history manifest")
+
+    // 2. Real removal (keepReceipt = false)
+    let realPlan = PackageRemovalPlan(
+        packageInfo: pkgA,
+        selectedItems: scanResult.items,
+        candidateEmptyDirectories: scanResult.candidateEmptyDirectories,
+        isPermanent: true,
+        dryRun: false,
+        keepReceipt: false
+    )
+    let execRes = try remover.executePackageRemoval(plan: realPlan, receiptManager: stub)
+    assert(execRes.isCompleteSuccess, "Package removal completes cleanly")
+    assert(!fm.fileExists(atPath: exclusiveBin.path) && !fm.fileExists(atPath: toolExec.path), "Package binaries removed")
+    assert(fm.fileExists(atPath: sharedBin.path), "Shared sibling file preserved on disk")
+    assert(fm.fileExists(atPath: runtimeUserData.path), "Untracked runtime user database preserved on disk")
+    assert(!fm.fileExists(atPath: dataToolDir.appendingPathComponent("bin").path), "Empty package subdirectory pruned after file removal")
+    assert(fm.fileExists(atPath: usrLocalBin.path), "Protected structural root usr/local/bin preserved")
+    assert(execRes.receiptForgotten && stub.forgotten.contains(pkgA.packageIdentifier), "Package receipt forgotten via pkgutil --forget")
+
+    let history = historyLogger.loadHistory()
+    assert(history.count == 1 && history[0].forgottenPackageID == pkgA.packageIdentifier, "Removal audit record logs forgottenPackageID")
+
+    // 3. Protected system package must throw inside TrashRemover
+    let sysPkg = PackageInfo(packageIdentifier: "com.apple.files.data-template", version: "1.0")
+    let sysPlan = PackageRemovalPlan(packageInfo: sysPkg, selectedItems: [])
+    assertThrows({ try remover.executePackageRemoval(plan: sysPlan, receiptManager: stub) }, "TrashRemover rejects protected system package")
+} catch {
+    fail("PackageRemoverTests", "\(error)")
+}
+
 print("\n\u{001B}[1;32m🎉 All Unit Tests Passed Successfully!\u{001B}[0m\n")
 

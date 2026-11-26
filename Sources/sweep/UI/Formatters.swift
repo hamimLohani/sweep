@@ -22,6 +22,13 @@ public struct Formatters {
         return path
     }
 
+    public static func jsonEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
     public static func printAppSummary(_ app: AppInfo) {
         print(Terminal.bold("Application: ") + Terminal.colorize(app.displayName, .boldCyan))
         print(Terminal.bold("Bundle ID:   ") + Terminal.colorize(app.bundleIdentifier, .cyan))
@@ -32,6 +39,27 @@ public struct Formatters {
         print(Terminal.bold("App Size:    ") + Terminal.formatBytes(app.bundleSizeBytes))
         if !app.receiptPackages.isEmpty {
             print(Terminal.bold("Installer:   ") + "Package receipt (\(app.receiptPackages.joined(separator: ", ")))")
+        }
+        print(Terminal.dim(String(repeating: "─", count: 65)))
+    }
+
+    public static func printPackageSummary(_ pkg: PackageInfo) {
+        print(Terminal.bold("Package ID:   ") + Terminal.colorize(pkg.packageIdentifier, .boldCyan))
+        if let fileName = pkg.packageFileName, !fileName.isEmpty {
+            print(Terminal.bold("Package File: ") + fileName)
+        }
+        if let version = pkg.version, !version.isEmpty {
+            print(Terminal.bold("Version:      ") + version)
+        }
+        print(Terminal.bold("Install Root: ") + pkg.baseURL.path)
+        if let installTime = pkg.installTime {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            print(Terminal.bold("Installed On: ") + formatter.string(from: installTime))
+        }
+        if !pkg.groups.isEmpty {
+            print(Terminal.bold("Groups:       ") + pkg.groups.joined(separator: ", "))
         }
         print(Terminal.dim(String(repeating: "─", count: 65)))
     }

@@ -16,6 +16,8 @@ public enum SweepExitCode: Int32 {
 
 public enum SweepError: LocalizedError {
     case appNotFound(String)
+    case packageNotFound(String)
+    case ambiguousPackage(String, [String])
     case permissionDenied(String)
     case protectedSystemComponent(String)
     case invalidPath(String)
@@ -25,11 +27,11 @@ public enum SweepError: LocalizedError {
 
     public var exitCode: SweepExitCode {
         switch self {
-        case .appNotFound:
+        case .appNotFound, .packageNotFound:
             return .appNotFound
         case .permissionDenied, .protectedSystemComponent:
             return .permissionError
-        case .invalidPath:
+        case .invalidPath, .ambiguousPackage:
             return .usageError
         case .runningAppRefusedQuit, .executionFailed, .general:
             return .generalError
@@ -40,6 +42,12 @@ public enum SweepError: LocalizedError {
         switch self {
         case .appNotFound(let target):
             return "Application not found: '\(target)'."
+        case .packageNotFound(let target):
+            return "Package not found: '\(target)'."
+        case .ambiguousPackage(let target, let candidates):
+            let listed = candidates.prefix(10).map { "  - \($0)" }.joined(separator: "\n")
+            let extra = candidates.count > 10 ? "\n  ... and \(candidates.count - 10) more" : ""
+            return "Multiple packages match '\(target)':\n\(listed)\(extra)\nSpecify the exact package identifier."
         case .permissionDenied(let details):
             return "Permission denied: \(details)"
         case .protectedSystemComponent(let details):

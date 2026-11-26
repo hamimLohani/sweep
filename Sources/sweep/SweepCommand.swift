@@ -14,13 +14,17 @@ public struct SweepCommand: ParsableCommand {
           sweep scan <app>            Inspect leftovers without deleting
           sweep remove <app>          Uninstall an application and its leftovers
           sweep remove cache <app>    Purge cache files for an app (e.g. Safari) or 'all'
+          sweep pkg list              List installed .pkg package receipts
+          sweep pkg scan <pkg>        Inspect files & leftovers for a .pkg receipt
+          sweep pkg remove <pkg>      Uninstall a .pkg package and forget its receipt
           sweep doctor                Check system permissions and health
         """,
-        version: "sweep 1.0.8",
+        version: "sweep 1.1.0",
         subcommands: [
             ListCommand.self,
             ScanCommand.self,
             RemoveCommand.self,
+            PkgCommand.self,
             DoctorCommand.self
         ]
     )

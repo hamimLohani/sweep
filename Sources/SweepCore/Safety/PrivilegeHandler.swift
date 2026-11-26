@@ -1,7 +1,16 @@
 import Foundation
 import Darwin
 
-public final class PrivilegeHandler {
+public protocol PrivilegeHandling {
+    var isRoot: Bool { get }
+    func canWrite(to url: URL) -> Bool
+    func hasCachedSudo() -> Bool
+    func authenticateIfNeeded() throws
+    func removeWithPrivilege(at url: URL) throws
+    func forgetPackageReceipt(_ packageID: String) throws
+}
+
+public final class PrivilegeHandler: PrivilegeHandling {
     public static let shared = PrivilegeHandler()
 
     public init() {}
@@ -11,9 +20,15 @@ public final class PrivilegeHandler {
         return geteuid() == 0
     }
 
-    /// Checks if the current process has write permissions for the specified URL
+    /// Checks if the current process has write permissions for the specified URL (and its parent for unlinking)
     public func canWrite(to url: URL) -> Bool {
-        return access(url.path, W_OK) == 0
+        var st = stat()
+        let isSymlink = lstat(url.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFLNK
+        let parentWritable = access(url.deletingLastPathComponent().path, W_OK) == 0
+        if isSymlink {
+            return parentWritable
+        }
+        return access(url.path, W_OK) == 0 && parentWritable
     }
 
     /// Checks if sudo credentials are currently active and cached
@@ -67,6 +82,19 @@ public final class PrivilegeHandler {
         let exitCode = executeInForeground(command: "/usr/bin/sudo", arguments: ["/bin/rm", "-rf", url.path])
         if exitCode != 0 {
             throw SweepError.permissionDenied("sudo rm failed for '\(url.path)' with exit code \(exitCode)")
+        }
+    }
+
+    /// Forgets a macOS installer package receipt via `pkgutil --forget`, using sudo if needed
+    public func forgetPackageReceipt(_ packageID: String) throws {
+        let exitCode: Int32
+        if isRoot {
+            exitCode = executeInForeground(command: "/usr/sbin/pkgutil", arguments: ["--forget", packageID])
+        } else {
+            exitCode = executeInForeground(command: "/usr/bin/sudo", arguments: ["/usr/sbin/pkgutil", "--forget", packageID])
+        }
+        if exitCode != 0 {
+            throw SweepError.executionFailed("pkgutil --forget '\(packageID)' failed with exit code \(exitCode)")
         }
     }
 

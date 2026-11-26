@@ -85,6 +85,9 @@ struct ScanCommand: ParsableCommand {
             if cacheSizeBytes > 0 {
                 print(Terminal.dim("   To clean only its cache (") + Terminal.colorize(Terminal.formatBytes(cacheSizeBytes), .cyan) + Terminal.dim("), run:            ") + Terminal.bold("sweep remove cache \"\(target)\""))
             }
+            if let firstPkg = app.receiptPackages.first {
+                print(Terminal.dim("   To inspect installer package receipt, run:       ") + Terminal.bold("sweep pkg scan \"\(firstPkg)\""))
+            }
         }
     }
 }
