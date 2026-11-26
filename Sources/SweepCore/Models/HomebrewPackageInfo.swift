@@ -44,6 +44,7 @@ public struct HomebrewPackageInfo: Codable, Equatable, Hashable {
     public let zapTrashPaths: [String]
     public let zapDeletePaths: [String]
     public let zapRmdirPaths: [String]
+    public var installedSizeBytes: Int64?
 
     public init(
         name: String,
@@ -76,7 +77,8 @@ public struct HomebrewPackageInfo: Codable, Equatable, Hashable {
         artifactPkgIDs: [String] = [],
         zapTrashPaths: [String] = [],
         zapDeletePaths: [String] = [],
-        zapRmdirPaths: [String] = []
+        zapRmdirPaths: [String] = [],
+        installedSizeBytes: Int64? = nil
     ) {
         self.name = name
         self.fullName = fullName ?? name
@@ -109,6 +111,7 @@ public struct HomebrewPackageInfo: Codable, Equatable, Hashable {
         self.zapTrashPaths = zapTrashPaths
         self.zapDeletePaths = zapDeletePaths
         self.zapRmdirPaths = zapRmdirPaths
+        self.installedSizeBytes = installedSizeBytes
     }
 
     public var primaryDisplayName: String {

@@ -280,6 +280,63 @@ public final class HomebrewScanner {
         )
     }
 
+    /// Computes total on-disk bytes for each Homebrew formula/cask concurrently (Cellar/Caskroom + installed cask artifacts).
+    public func installedSizes(for packages: [HomebrewPackageInfo]) -> [String: Int64] {
+        guard !packages.isEmpty else { return [:] }
+
+        let resultLock = NSLock()
+        var sizes: [String: Int64] = [:]
+        let group = DispatchGroup()
+        let semaphore = DispatchSemaphore(value: 8)
+        let queue = DispatchQueue(label: "sweep.brew.sizes", attributes: .concurrent)
+
+        for pkg in packages {
+            group.enter()
+            queue.async {
+                semaphore.wait()
+                defer {
+                    semaphore.signal()
+                    group.leave()
+                }
+                let size = self.installedSizeBytes(for: pkg)
+                let key = Self.sizeKey(for: pkg)
+                resultLock.lock()
+                sizes[key] = size
+                resultLock.unlock()
+            }
+        }
+
+        group.wait()
+        return sizes
+    }
+
+    public static func sizeKey(for pkg: HomebrewPackageInfo) -> String {
+        return "\(pkg.kind.rawValue):\(pkg.fullName)"
+    }
+
+    public func installedSizeBytes(for pkg: HomebrewPackageInfo) -> Int64 {
+        var total: Int64 = 0
+        var seenCanonical = Set<String>()
+
+        if let cellarURL = pkg.cellarOrCaskroomURL, pathExists(cellarURL.path) {
+            seenCanonical.insert(canonicalEntryPath(cellarURL))
+            total += calculateSize(of: cellarURL)
+        }
+
+        if pkg.kind == .cask {
+            let artifactPaths = pkg.artifactAppPaths + pkg.artifactBinaryPaths + pkg.artifactFontPaths + pkg.artifactManpagePaths
+            for rawPath in artifactPaths {
+                let url = expandPath(rawPath)
+                guard pathExists(url.path) else { continue }
+                let canonical = canonicalEntryPath(url)
+                guard seenCanonical.insert(canonical).inserted else { continue }
+                total += calculateSize(of: url)
+            }
+        }
+
+        return total
+    }
+
     // MARK: - Helpers
 
     private func expandPath(_ raw: String) -> URL {

@@ -59,12 +59,19 @@ struct BrewListCommand: ParsableCommand {
         let kind: HomebrewPackageKind? = formulae ? .formula : (casks ? .cask : nil)
 
         let resolver = HomebrewResolver()
-        let packages = try resolver.listInstalledPackages(
+        let rawPackages = try resolver.listInstalledPackages(
             kind: kind,
             leavesOnly: leaves,
             outdatedOnly: outdated,
             filter: filter
         )
+
+        let sizes = HomebrewScanner().installedSizes(for: rawPackages)
+        let packages: [HomebrewPackageInfo] = rawPackages.map { pkg in
+            var copy = pkg
+            copy.installedSizeBytes = sizes[HomebrewScanner.sizeKey(for: pkg)] ?? 0
+            return copy
+        }
 
         if json {
             let data = try Formatters.jsonEncoder().encode(packages)
@@ -80,24 +87,30 @@ struct BrewListCommand: ParsableCommand {
         }
 
         print(Terminal.bold("Installed Homebrew Packages (\(packages.count) found):"))
-        print(Terminal.dim(String(repeating: "─", count: 96)))
+        print(Terminal.dim(String(repeating: "─", count: 108)))
 
         let maxNameLen = min(max(packages.map { $0.fullName.count }.max() ?? 24, 20), 34)
-        let maxVerLen = min(max(packages.map { $0.version.count }.max() ?? 12, 10), 22)
-        let maxTapLen = min(max(packages.map { $0.tap.count }.max() ?? 16, 14), 22)
+        let maxVerLen = min(max(packages.map { $0.version.count }.max() ?? 12, 10), 20)
+        let maxTapLen = min(max(packages.map { $0.tap.count }.max() ?? 16, 14), 20)
 
         let header = "Package".padding(toLength: maxNameLen, withPad: " ", startingAt: 0) + "  " +
                      "Type".padding(toLength: 9, withPad: " ", startingAt: 0) + "  " +
                      "Version".padding(toLength: maxVerLen, withPad: " ", startingAt: 0) + "  " +
-                     "Tap".padding(toLength: maxTapLen, withPad: " ", startingAt: 0)
+                     "Tap".padding(toLength: maxTapLen, withPad: " ", startingAt: 0) + "  " +
+                     "Size".padding(toLength: 10, withPad: " ", startingAt: 0)
         print(Terminal.bold(header))
-        print(Terminal.dim(String(repeating: "─", count: 96)))
+        print(Terminal.dim(String(repeating: "─", count: 108)))
 
+        var totalBytes: Int64 = 0
         for pkg in packages {
+            let size = pkg.installedSizeBytes ?? 0
+            totalBytes += size
+
             let nameCol = truncate(pkg.fullName, to: maxNameLen).padding(toLength: maxNameLen, withPad: " ", startingAt: 0)
             let typeCol = pkg.kind.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
             let verCol = truncate(pkg.version, to: maxVerLen).padding(toLength: maxVerLen, withPad: " ", startingAt: 0)
             let tapCol = truncate(pkg.tap, to: maxTapLen).padding(toLength: maxTapLen, withPad: " ", startingAt: 0)
+            let sizeCol = Terminal.formatBytes(size).padding(toLength: 10, withPad: " ", startingAt: 0)
 
             var tags: [String] = []
             if pkg.isOutdated { tags.append("outdated") }
@@ -105,13 +118,13 @@ struct BrewListCommand: ParsableCommand {
             if pkg.serviceRunning { tags.append("running") }
             let tagStr = tags.isEmpty ? "" : " " + Terminal.colorize("[\(tags.joined(separator: ", "))]", .yellow)
 
-            print("\(nameCol)  \(typeCol)  \(verCol)  \(tapCol)\(tagStr)")
+            print("\(nameCol)  \(typeCol)  \(verCol)  \(tapCol)  \(sizeCol)\(tagStr)")
         }
 
-        print(Terminal.dim(String(repeating: "─", count: 96)))
+        print(Terminal.dim(String(repeating: "─", count: 108)))
         let formulaCount = packages.filter { $0.kind == .formula }.count
         let caskCount = packages.filter { $0.kind == .cask }.count
-        print(Terminal.bold("Total: ") + "\(packages.count) packages (\(formulaCount) formulae, \(caskCount) casks)")
+        print(Terminal.bold("Total: ") + "\(packages.count) packages (\(formulaCount) formulae, \(caskCount) casks), " + Terminal.colorize(Terminal.formatBytes(totalBytes), .boldCyan))
     }
 
     private func truncate(_ value: String, to maxLen: Int) -> String {

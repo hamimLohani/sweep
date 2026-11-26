@@ -17,6 +17,7 @@ public protocol ReceiptReading {
     func allPackages() -> [String]
     func packageInfo(for pkgID: String, includeGroups: Bool) -> PackageInfo?
     func packageContents(for pkgID: String) -> PackageContents
+    func packageInstalledSizes(for pkgIDs: [String]) -> [String: Int64]
     func inspectOwnership(for pkgID: String, candidateFiles: [URL], candidateDirectories: [URL]) -> PackageOwnershipReport
     func forgetPackage(_ pkgID: String) throws
 
@@ -28,6 +29,22 @@ public protocol ReceiptReading {
 public extension ReceiptReading {
     func packageInfo(for pkgID: String) -> PackageInfo? {
         return packageInfo(for: pkgID, includeGroups: false)
+    }
+
+    func packageInstalledSizes(for pkgIDs: [String]) -> [String: Int64] {
+        var result: [String: Int64] = [:]
+        for id in pkgIDs {
+            let files = filesForPackage(id)
+            var total: Int64 = 0
+            for url in files {
+                var st = stat()
+                if lstat(url.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG {
+                    total += Int64(st.st_size)
+                }
+            }
+            result[id] = total
+        }
+        return result
     }
 }
 
@@ -190,6 +207,203 @@ public final class ReceiptReader: ReceiptReading {
         cachedContents[pkgID] = result
         lock.unlock()
         return result
+    }
+
+    /// Computes total on-disk regular-file bytes for each package receipt concurrently using `.bom` via `lsbom` (with `pkgutil` fallback).
+    public func packageInstalledSizes(for pkgIDs: [String]) -> [String: Int64] {
+        guard !pkgIDs.isEmpty else { return [:] }
+
+        let resultLock = NSLock()
+        var sizes: [String: Int64] = [:]
+        let group = DispatchGroup()
+        let semaphore = DispatchSemaphore(value: 8)
+        let queue = DispatchQueue(label: "sweep.receipt.sizes", attributes: .concurrent)
+
+        for pkgID in pkgIDs {
+            group.enter()
+            queue.async {
+                semaphore.wait()
+                defer {
+                    semaphore.signal()
+                    group.leave()
+                }
+                let size = self.computeInstalledSize(for: pkgID)
+                resultLock.lock()
+                sizes[pkgID] = size
+                resultLock.unlock()
+            }
+        }
+
+        group.wait()
+        return sizes
+    }
+
+    private func computeInstalledSize(for pkgID: String) -> Int64 {
+        guard let info = packageInfo(for: pkgID) else { return 0 }
+        let basePath = info.baseURL.path
+
+        let bomPath = "/var/db/receipts/\(pkgID).bom"
+        if FileManager.default.fileExists(atPath: bomPath) {
+            let bomData = runCommandData("/usr/bin/lsbom", ["-f", "-p", "fs", bomPath])
+            guard !bomData.isEmpty else { return 0 }
+            return computeSizeFromBomPairs(bomData, basePath: basePath)
+        }
+
+        let pkgutilData = runCommandData("/usr/sbin/pkgutil", ["--only-files", "--files", pkgID])
+        guard !pkgutilData.isEmpty else { return 0 }
+        return computeSizeByStattingPaths(pkgutilData, basePath: basePath)
+    }
+
+    private func statRelativePath(
+        in ptr: UnsafePointer<UInt8>,
+        relStart: Int,
+        relEnd: Int,
+        baseBytes: [UInt8],
+        isRootBase: Bool,
+        pathBuffer: inout [UInt8],
+        st: inout stat
+    ) -> Int64? {
+        pathBuffer.removeAll(keepingCapacity: true)
+        if !isRootBase { pathBuffer.append(contentsOf: baseBytes) }
+        pathBuffer.append(0x2F)
+        pathBuffer.append(contentsOf: UnsafeBufferPointer(start: ptr + relStart, count: relEnd - relStart))
+        pathBuffer.append(0)
+
+        let ok = pathBuffer.withUnsafeBufferPointer { cBuf -> Bool in
+            guard let cPtr = cBuf.baseAddress else { return false }
+            return cPtr.withMemoryRebound(to: CChar.self, capacity: cBuf.count) { lstat($0, &st) == 0 }
+        }
+        guard ok else { return nil }
+        return (st.st_mode & S_IFMT) == S_IFREG ? Int64(st.st_size) : 0
+    }
+
+    private func normalizedBaseBytes(_ basePath: String) -> ([UInt8], Bool) {
+        var baseBytes = Array(basePath.utf8)
+        while baseBytes.count > 1 && baseBytes.last == 0x2F { baseBytes.removeLast() }
+        let isRootBase = baseBytes.count == 1 && baseBytes[0] == 0x2F
+        return (baseBytes, isRootBase)
+    }
+
+    private func computeSizeFromBomPairs(_ data: Data, basePath: String) -> Int64 {
+        struct BomEntry {
+            let relStart: Int
+            let relEnd: Int
+            let size: Int64
+        }
+
+        var entries: [BomEntry] = []
+        entries.reserveCapacity(1024)
+
+        data.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return }
+            let count = rawBuf.count
+            var i = 0
+
+            while i < count {
+                let lineStart = i
+                while i < count && ptr[i] != 0x0A { i += 1 }
+                let lineEnd = i
+                i += 1
+
+                var tabIdx = lineStart
+                while tabIdx < lineEnd && ptr[tabIdx] != 0x09 { tabIdx += 1 }
+                guard tabIdx < lineEnd else { continue }
+
+                var relStart = lineStart
+                var relEnd = tabIdx
+                while relStart < relEnd && ptr[relStart] == 0x20 { relStart += 1 }
+                while relEnd > relStart && ptr[relEnd - 1] == 0x20 { relEnd -= 1 }
+                if relEnd - relStart >= 2 && ptr[relStart] == 0x2E && ptr[relStart + 1] == 0x2F {
+                    relStart += 2
+                }
+                while relStart < relEnd && ptr[relStart] == 0x2F { relStart += 1 }
+                guard relStart < relEnd, !(relEnd - relStart == 1 && ptr[relStart] == 0x2E) else { continue }
+
+                var sizeVal: Int64 = 0
+                var s = tabIdx + 1
+                while s < lineEnd {
+                    let b = ptr[s]
+                    if b >= 0x30 && b <= 0x39 {
+                        sizeVal = sizeVal &* 10 &+ Int64(b - 0x30)
+                    }
+                    s += 1
+                }
+                entries.append(BomEntry(relStart: relStart, relEnd: relEnd, size: sizeVal))
+            }
+        }
+
+        guard !entries.isEmpty else { return 0 }
+
+        let (baseBytes, isRootBase) = normalizedBaseBytes(basePath)
+        var pathBuffer: [UInt8] = []
+        pathBuffer.reserveCapacity(512)
+        var st = stat()
+
+        if entries.count > 5_000 {
+            var presentCount = 0
+            let sampleCount = 48
+            let step = entries.count / sampleCount
+            var sampledAllPresent = true
+            data.withUnsafeBytes { rawBuf in
+                guard let ptr = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return }
+                for idx in stride(from: 0, to: entries.count, by: max(1, step)).prefix(sampleCount) {
+                    let entry = entries[idx]
+                    if statRelativePath(in: ptr, relStart: entry.relStart, relEnd: entry.relEnd, baseBytes: baseBytes, isRootBase: isRootBase, pathBuffer: &pathBuffer, st: &st) != nil {
+                        presentCount += 1
+                    } else {
+                        sampledAllPresent = false
+                    }
+                }
+            }
+            if presentCount == 0 { return 0 }
+            if sampledAllPresent { return entries.reduce(0) { $0 + $1.size } }
+        }
+
+        var total: Int64 = 0
+        data.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return }
+            for entry in entries {
+                if let fileSize = statRelativePath(in: ptr, relStart: entry.relStart, relEnd: entry.relEnd, baseBytes: baseBytes, isRootBase: isRootBase, pathBuffer: &pathBuffer, st: &st) {
+                    total += fileSize
+                }
+            }
+        }
+        return total
+    }
+
+    private func computeSizeByStattingPaths(_ rawData: Data, basePath: String) -> Int64 {
+        let (baseBytes, isRootBase) = normalizedBaseBytes(basePath)
+        var pathBuffer: [UInt8] = []
+        pathBuffer.reserveCapacity(512)
+        var total: Int64 = 0
+        var st = stat()
+
+        rawData.withUnsafeBytes { rawBuf in
+            guard let ptr = rawBuf.bindMemory(to: UInt8.self).baseAddress else { return }
+            let count = rawBuf.count
+            var i = 0
+
+            while i < count {
+                let lineStart = i
+                while i < count && ptr[i] != 0x0A { i += 1 }
+                var start = lineStart
+                var end = i
+                i += 1
+
+                while start < end && (ptr[start] == 0x20 || ptr[start] == 0x09 || ptr[start] == 0x0D) { start += 1 }
+                while end > start && (ptr[end - 1] == 0x20 || ptr[end - 1] == 0x09 || ptr[end - 1] == 0x0D) { end -= 1 }
+                guard start < end else { continue }
+                if end - start == 1 && ptr[start] == 0x2E { continue }
+                if end - start >= 2 && ptr[start] == 0x2E && ptr[start + 1] == 0x2F { start += 2 }
+                while start < end && ptr[start] == 0x2F { start += 1 }
+                guard start < end else { continue }
+
+                if let fileSize = statRelativePath(in: ptr, relStart: start, relEnd: end, baseBytes: baseBytes, isRootBase: isRootBase, pathBuffer: &pathBuffer, st: &st) {
+                    total += fileSize
+                }
+            }
+        }
+        return total
     }
 
     /// Checks whether candidate files or directories overlap with any OTHER installed package receipt.
@@ -463,6 +677,11 @@ public final class ReceiptReader: ReceiptReading {
     }
 
     private func runCommand(_ executable: String, _ arguments: [String]) -> String {
+        let data = runCommandData(executable, arguments)
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func runCommandData(_ executable: String, _ arguments: [String]) -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -475,9 +694,9 @@ public final class ReceiptReader: ReceiptReading {
             try process.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            return String(data: data, encoding: .utf8) ?? ""
+            return data
         } catch {
-            return ""
+            return Data()
         }
     }
 }

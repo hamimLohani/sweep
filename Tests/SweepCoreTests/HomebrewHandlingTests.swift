@@ -70,6 +70,8 @@ final class HomebrewHandlingTests: XCTestCase {
         )
         let scan = try scanner.scan(packageInfo: pkg)
         XCTAssertTrue(scan.cleanupItems.contains { $0.url.standardized.path == etcDir.standardized.path })
+        let batchSizes = scanner.installedSizes(for: [pkg])
+        XCTAssertEqual(batchSizes[HomebrewScanner.sizeKey(for: pkg)], 3)
 
         let remover = HomebrewRemover(
             fileManager: fm,

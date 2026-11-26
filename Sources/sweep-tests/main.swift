@@ -883,6 +883,23 @@ do {
     assert(caskScan.cleanupItems.contains { $0.url.lastPathComponent == "com.example.democask.plist" }, "Detects cask .app runtime preferences")
     assert(caskScan.cleanupItems.contains { $0.url.lastPathComponent == "democask-zap-extra.dat" }, "Expands cask zap glob safely")
 
+    // List sizing for formula + cask + receipt
+    let brewSizes = scanner.installedSizes(for: [demoPkg, caskPkg])
+    assert((brewSizes[HomebrewScanner.sizeKey(for: demoPkg)] ?? 0) == 14, "installedSizes computes formula Cellar size (14 bytes)")
+    assert((brewSizes[HomebrewScanner.sizeKey(for: caskPkg)] ?? 0) > 0, "installedSizes computes cask artifact app bundle size")
+
+    let sizeReceiptStub = StubReceiptReader()
+    let existingReceiptFile = sandbox.rootURL.appendingPathComponent("usr/local/bin/sized-tool")
+    try fm.createDirectory(at: existingReceiptFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "1234567890".write(to: existingReceiptFile, atomically: true, encoding: .utf8)
+    sizeReceiptStub.packages["com.example.sized"] = PackageInfo(packageIdentifier: "com.example.sized", version: "1.0")
+    sizeReceiptStub.contentsMap["com.example.sized"] = PackageContents(
+        files: [existingReceiptFile, sandbox.rootURL.appendingPathComponent("usr/local/bin/missing-tool")],
+        directories: []
+    )
+    let receiptSizes = sizeReceiptStub.packageInstalledSizes(for: ["com.example.sized"])
+    assert(receiptSizes["com.example.sized"] == 10, "packageInstalledSizes counts existing receipt files and ignores missing ones")
+
     let remover = HomebrewRemover(
         fileManager: fm,
         reader: stub,

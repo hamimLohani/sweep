@@ -22,7 +22,7 @@ public struct SweepCommand: ParsableCommand {
           sweep pkg remove <pkg>      Uninstall a Homebrew package or .pkg receipt
           sweep doctor                Check system permissions and health
         """,
-        version: "sweep 1.2.0",
+        version: "sweep 1.2.1",
         subcommands: [
             ListCommand.self,
             ScanCommand.self,

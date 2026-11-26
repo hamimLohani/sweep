@@ -32,6 +32,7 @@ struct UnifiedPkgEntry: Codable {
     let source: String
     let version: String
     let location: String
+    let sizeBytes: Int64
 }
 
 struct PkgListCommand: ParsableCommand {
@@ -69,12 +70,15 @@ struct PkgListCommand: ParsableCommand {
             let hbReader = HomebrewReader.shared
             if hbReader.isAvailable() {
                 let hbPkgs = try HomebrewResolver(reader: hbReader).listInstalledPackages(filter: filter)
+                let hbSizes = HomebrewScanner(reader: hbReader).installedSizes(for: hbPkgs)
                 for p in hbPkgs {
+                    let size = hbSizes[HomebrewScanner.sizeKey(for: p)] ?? 0
                     entries.append(UnifiedPkgEntry(
                         identifier: p.fullName,
                         source: "brew-\(p.kind.rawValue)",
                         version: p.version,
-                        location: p.tap
+                        location: p.tap,
+                        sizeBytes: size
                     ))
                 }
             } else if brew {
@@ -84,12 +88,15 @@ struct PkgListCommand: ParsableCommand {
 
         if includeReceipts {
             let pkgReceipts = PackageResolver().listInstalledPackages(includeApple: all, filter: filter)
+            let receiptSizes = ReceiptReader.shared.packageInstalledSizes(for: pkgReceipts.map { $0.packageIdentifier })
             for r in pkgReceipts {
+                let size = receiptSizes[r.packageIdentifier] ?? 0
                 entries.append(UnifiedPkgEntry(
                     identifier: r.packageIdentifier,
                     source: "pkg-receipt",
                     version: r.version ?? "-",
-                    location: r.baseURL.path
+                    location: r.baseURL.path,
+                    sizeBytes: size
                 ))
             }
         }
@@ -108,29 +115,33 @@ struct PkgListCommand: ParsableCommand {
         }
 
         print(Terminal.bold("Installed Packages (\(entries.count) found):"))
-        print(Terminal.dim(String(repeating: "─", count: 98)))
+        print(Terminal.dim(String(repeating: "─", count: 108)))
 
-        let maxIDLen = min(max(entries.map { $0.identifier.count }.max() ?? 30, 24), 44)
+        let maxIDLen = min(max(entries.map { $0.identifier.count }.max() ?? 28, 22), 38)
         let maxVerLen = min(max(entries.map { $0.version.count }.max() ?? 10, 8), 16)
-        let maxLocLen = min(max(entries.map { $0.location.count }.max() ?? 18, 16), 24)
+        let maxLocLen = min(max(entries.map { $0.location.count }.max() ?? 16, 14), 22)
 
         let header = "Package".padding(toLength: maxIDLen, withPad: " ", startingAt: 0) + "  " +
                      "Source".padding(toLength: 12, withPad: " ", startingAt: 0) + "  " +
                      "Version".padding(toLength: maxVerLen, withPad: " ", startingAt: 0) + "  " +
-                     "Location / Tap".padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
+                     "Location / Tap".padding(toLength: maxLocLen, withPad: " ", startingAt: 0) + "  " +
+                     "Size".padding(toLength: 10, withPad: " ", startingAt: 0)
         print(Terminal.bold(header))
-        print(Terminal.dim(String(repeating: "─", count: 98)))
+        print(Terminal.dim(String(repeating: "─", count: 108)))
 
+        var totalBytes: Int64 = 0
         for e in entries {
+            totalBytes += e.sizeBytes
             let idCol = truncate(e.identifier, to: maxIDLen).padding(toLength: maxIDLen, withPad: " ", startingAt: 0)
             let srcCol = e.source.padding(toLength: 12, withPad: " ", startingAt: 0)
             let verCol = truncate(e.version, to: maxVerLen).padding(toLength: maxVerLen, withPad: " ", startingAt: 0)
             let locCol = truncate(e.location, to: maxLocLen).padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
-            print("\(idCol)  \(srcCol)  \(verCol)  \(locCol)")
+            let sizeCol = Terminal.formatBytes(e.sizeBytes).padding(toLength: 10, withPad: " ", startingAt: 0)
+            print("\(idCol)  \(srcCol)  \(verCol)  \(locCol)  \(sizeCol)")
         }
 
-        print(Terminal.dim(String(repeating: "─", count: 98)))
-        print(Terminal.bold("Total: ") + "\(entries.count) packages")
+        print(Terminal.dim(String(repeating: "─", count: 108)))
+        print(Terminal.bold("Total: ") + "\(entries.count) packages, " + Terminal.colorize(Terminal.formatBytes(totalBytes), .boldCyan))
         if includeReceipts && !all {
             print(Terminal.dim("Tip: Use '--brew' for Homebrew only, '--receipts' for .pkg receipts, or '--all' to include Apple receipts."))
         }
