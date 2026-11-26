@@ -117,21 +117,29 @@ sweep remove cache --dry-run
 > [!NOTE]
 > Cache cleaning targets temporary caches (`~/Library/Caches`, Darwin caches, WebKit data, and sandbox container caches) while preserving all application binaries, user settings, preferences, and personal documents. Administrator privileges (`sudo`) are authenticated to purge system and Darwin cache directories cleanly.
 
-### 7. Manage & Uninstall `.pkg` Installer Packages
+### 7. Manage & Uninstall Homebrew Packages & `.pkg` Receipts
 ```bash
-# List third-party .pkg installer receipts (use --all to include Apple packages)
+# List installed Homebrew formulae and casks (or --leaves / --casks / --outdated)
+sweep brew list
+sweep brew list --leaves
+
+# Scan a Homebrew formula or cask for Cellar/Caskroom size, zap paths, caches & leftovers
+sweep brew scan "neovide-app"
+sweep brew scan "bat"
+
+# Uninstall a Homebrew package and clean leftover config/zap/download caches
+sweep brew remove "neovide-app"
+sweep brew remove "bat" --autoremove --dry-run
+
+# Unified package commands (supports both Homebrew packages and .pkg receipts)
 sweep pkg list
-sweep pkg list --all
-
-# Inspect files, shared files, and runtime leftovers for a package
+sweep pkg list --brew
+sweep pkg list --receipts
 sweep pkg scan org.wireshark.ChmodBPF.pkg
-
-# Uninstall a .pkg package, clean leftovers, and forget its receipt
-sweep pkg remove org.wireshark.ChmodBPF.pkg
 sweep pkg remove org.wireshark.ChmodBPF.pkg --dry-run --yes
 ```
 > [!NOTE]
-> `sweep pkg` checks cross-package ownership and preserves any files shared with other installed `.pkg` receipts, protects macOS system packages and structural roots (such as `/usr/local/bin` and `/opt/homebrew`), prunes empty directories, and runs `pkgutil --forget` once removal completes.
+> `sweep brew` checks reverse dependencies (`requiredBy`), stops active `brew services` or running cask `.app` bundles, previews orphaned dependencies (`--autoremove`), and removes cask `zap` targets, `.app` leftovers, Homebrew `etc`/`var` folders, and `~/Library/Caches/Homebrew` downloads. `sweep pkg` handles both Homebrew packages and `.pkg` installer receipts (preserving shared receipt files and running `pkgutil --forget`).
 
 ---
 
@@ -170,9 +178,12 @@ Enter choice:
 | `sweep remove <app>` | Interactive uninstaller with checklist | `sweep remove "Discord"` |
 | `sweep remove cache [app]` | Purges app caches while preserving settings | `sweep remove cache "Safari"` |
 | `sweep remove cache all` | Purges caches across all installed applications | `sweep remove cache all` |
-| `sweep pkg list` | Lists installed `.pkg` package receipts | `sweep pkg list --all` |
-| `sweep pkg scan <pkg>` | Inspects `.pkg` files, shared files, and leftovers | `sweep pkg scan "ChmodBPF"` |
-| `sweep pkg remove <pkg>` | Uninstalls a `.pkg` package and forgets its receipt | `sweep pkg remove "ChmodBPF"` |
+| `sweep brew list` | Lists installed Homebrew formulae and casks | `sweep brew list --leaves` |
+| `sweep brew scan <pkg>` | Scans Homebrew artifacts, caches, zap paths & leftovers | `sweep brew scan "neovide-app"` |
+| `sweep brew remove <pkg>` | Uninstalls a Homebrew package and cleans leftovers | `sweep brew remove "bat" --autoremove` |
+| `sweep pkg list` | Lists Homebrew packages and `.pkg` receipts | `sweep pkg list --brew` |
+| `sweep pkg scan <pkg>` | Inspects Homebrew package or `.pkg` receipt leftovers | `sweep pkg scan "ChmodBPF"` |
+| `sweep pkg remove <pkg>` | Uninstalls a Homebrew package or `.pkg` receipt | `sweep pkg remove "ChmodBPF"` |
 | `sweep doctor` | Diagnoses permissions and system compatibility | `sweep doctor` |
 | `sweep --help` | Shows help instructions | `sweep --help` |
 | `sweep --version` | Displays installed version | `sweep --version` |

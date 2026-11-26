@@ -5,17 +5,19 @@ import SweepCore
 struct PkgCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "pkg",
-        abstract: "List, scan, and uninstall macOS installer packages (.pkg receipts).",
+        abstract: "List, scan, and uninstall Homebrew packages and macOS .pkg receipts.",
         discussion: """
-        Inspects and removes macOS installer packages registered in the receipt database
-        (pkgutil), safely skipping files shared with other packages, pruning empty
-        directories, cleaning associated leftovers, and forgetting package receipts.
+        Unified package management supporting both Homebrew packages (formulae & casks)
+        and macOS Installer receipts (pkgutil). You can also use 'sweep brew' directly
+        for Homebrew-only operations.
 
         EXAMPLES:
           sweep pkg list
-          sweep pkg list --all
+          sweep pkg list --brew
+          sweep pkg list --receipts
+          sweep pkg scan bat
           sweep pkg scan org.wireshark.ChmodBPF.pkg
-          sweep pkg remove org.wireshark.ChmodBPF.pkg --dry-run
+          sweep pkg remove neovide-app --dry-run
         """,
         subcommands: [
             PkgListCommand.self,
@@ -25,73 +27,112 @@ struct PkgCommand: ParsableCommand {
     )
 }
 
+struct UnifiedPkgEntry: Codable {
+    let identifier: String
+    let source: String
+    let version: String
+    let location: String
+}
+
 struct PkgListCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "list",
-        abstract: "List installed macOS installer packages (.pkg receipts)."
+        abstract: "List installed Homebrew packages and/or macOS .pkg receipts."
     )
 
-    @Flag(name: [.short, .long], help: "Include Apple system and App Store packages (com.apple.*).")
+    @Flag(name: [.short, .long], help: "List Homebrew packages (formulae & casks) only.")
+    var brew: Bool = false
+
+    @Flag(name: [.short, .long], help: "List macOS Installer (.pkg) receipts only.")
+    var receipts: Bool = false
+
+    @Flag(name: [.short, .long], help: "Include Apple system and App Store .pkg receipts (com.apple.*).")
     var all: Bool = false
 
-    @Option(name: [.short, .long], help: "Filter packages by identifier, filename, or name.")
+    @Option(name: [.short, .long], help: "Filter packages by identifier, name, or filename.")
     var filter: String?
 
     @Flag(name: .long, help: "Output results in JSON format.")
     var json: Bool = false
 
     func run() throws {
-        let resolver = PackageResolver()
-        let packages = resolver.listInstalledPackages(includeApple: all, filter: filter)
+        if brew && receipts {
+            throw SweepError.general("Specify at most one of --brew or --receipts (omit both to show all).")
+        }
+
+        let includeBrew = !receipts
+        let includeReceipts = !brew
+
+        var entries: [UnifiedPkgEntry] = []
+
+        if includeBrew {
+            let hbReader = HomebrewReader.shared
+            if hbReader.isAvailable() {
+                let hbPkgs = try HomebrewResolver(reader: hbReader).listInstalledPackages(filter: filter)
+                for p in hbPkgs {
+                    entries.append(UnifiedPkgEntry(
+                        identifier: p.fullName,
+                        source: "brew-\(p.kind.rawValue)",
+                        version: p.version,
+                        location: p.tap
+                    ))
+                }
+            } else if brew {
+                throw SweepError.general("Homebrew (brew) is not installed or not found in PATH.")
+            }
+        }
+
+        if includeReceipts {
+            let pkgReceipts = PackageResolver().listInstalledPackages(includeApple: all, filter: filter)
+            for r in pkgReceipts {
+                entries.append(UnifiedPkgEntry(
+                    identifier: r.packageIdentifier,
+                    source: "pkg-receipt",
+                    version: r.version ?? "-",
+                    location: r.baseURL.path
+                ))
+            }
+        }
 
         if json {
-            let encoder = Formatters.jsonEncoder()
-            let data = try encoder.encode(packages)
+            let data = try Formatters.jsonEncoder().encode(entries)
             if let output = String(data: data, encoding: .utf8) {
                 print(output)
             }
             return
         }
 
-        guard !packages.isEmpty else {
-            let scopeNote = all ? "" : " (third-party)"
-            print(Terminal.colorize("No\(scopeNote) installer packages found.", .yellow))
-            if !all {
-                print(Terminal.dim("Use --all to include Apple packages (com.apple.*)."))
-            }
+        guard !entries.isEmpty else {
+            print(Terminal.colorize("No matching packages found.", .yellow))
             return
         }
 
-        let scopeLabel = all ? "All" : "Third-Party"
-        print(Terminal.bold("Installed \(scopeLabel) Packages (\(packages.count) found):"))
-        print(Terminal.dim(String(repeating: "─", count: 96)))
+        print(Terminal.bold("Installed Packages (\(entries.count) found):"))
+        print(Terminal.dim(String(repeating: "─", count: 98)))
 
-        let maxIDLen = min(max(packages.map { $0.packageIdentifier.count }.max() ?? 32, 26), 46)
-        let maxVerLen = min(max(packages.map { ($0.version ?? "-").count }.max() ?? 10, 8), 16)
-        let maxLocLen = min(max(packages.map { $0.baseURL.path.count }.max() ?? 16, 16), 28)
+        let maxIDLen = min(max(entries.map { $0.identifier.count }.max() ?? 30, 24), 44)
+        let maxVerLen = min(max(entries.map { $0.version.count }.max() ?? 10, 8), 16)
+        let maxLocLen = min(max(entries.map { $0.location.count }.max() ?? 18, 16), 24)
 
-        let header = "Package Identifier".padding(toLength: maxIDLen, withPad: " ", startingAt: 0) + "  " +
+        let header = "Package".padding(toLength: maxIDLen, withPad: " ", startingAt: 0) + "  " +
+                     "Source".padding(toLength: 12, withPad: " ", startingAt: 0) + "  " +
                      "Version".padding(toLength: maxVerLen, withPad: " ", startingAt: 0) + "  " +
-                     "Install Root".padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
+                     "Location / Tap".padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
         print(Terminal.bold(header))
-        print(Terminal.dim(String(repeating: "─", count: 96)))
+        print(Terminal.dim(String(repeating: "─", count: 98)))
 
-        for pkg in packages {
-            let rawID = truncate(pkg.packageIdentifier, to: maxIDLen)
-            let rawVer = truncate(pkg.version ?? "-", to: maxVerLen)
-            let rawLoc = truncate(pkg.baseURL.path, to: maxLocLen)
-
-            let idCol = rawID.padding(toLength: maxIDLen, withPad: " ", startingAt: 0)
-            let verCol = rawVer.padding(toLength: maxVerLen, withPad: " ", startingAt: 0)
-            let locCol = rawLoc.padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
-
-            print("\(idCol)  \(verCol)  \(locCol)")
+        for e in entries {
+            let idCol = truncate(e.identifier, to: maxIDLen).padding(toLength: maxIDLen, withPad: " ", startingAt: 0)
+            let srcCol = e.source.padding(toLength: 12, withPad: " ", startingAt: 0)
+            let verCol = truncate(e.version, to: maxVerLen).padding(toLength: maxVerLen, withPad: " ", startingAt: 0)
+            let locCol = truncate(e.location, to: maxLocLen).padding(toLength: maxLocLen, withPad: " ", startingAt: 0)
+            print("\(idCol)  \(srcCol)  \(verCol)  \(locCol)")
         }
 
-        print(Terminal.dim(String(repeating: "─", count: 96)))
-        print(Terminal.bold("Total: ") + "\(packages.count) packages")
-        if !all {
-            print(Terminal.dim("Tip: Use 'sweep pkg list --all' to include Apple packages (com.apple.*)."))
+        print(Terminal.dim(String(repeating: "─", count: 98)))
+        print(Terminal.bold("Total: ") + "\(entries.count) packages")
+        if includeReceipts && !all {
+            print(Terminal.dim("Tip: Use '--brew' for Homebrew only, '--receipts' for .pkg receipts, or '--all' to include Apple receipts."))
         }
     }
 
@@ -101,31 +142,143 @@ struct PkgListCommand: ParsableCommand {
     }
 }
 
+private enum ResolvedPkgTarget {
+    case homebrew(HomebrewPackageInfo)
+    case receipt(PackageInfo)
+}
+
+private func resolveUnifiedPackage(
+    target: String,
+    brewOnly: Bool,
+    receiptsOnly: Bool,
+    formulaOnly: Bool,
+    caskOnly: Bool
+) throws -> ResolvedPkgTarget {
+    if brewOnly && receiptsOnly {
+        throw SweepError.general("Cannot specify both --brew and --receipts.")
+    }
+    let preferredKind = try BrewCommandHelpers.resolveKindFlag(formula: formulaOnly, cask: caskOnly)
+
+    if brewOnly || preferredKind != nil {
+        let hbPkg = try HomebrewResolver().resolve(target: target, preferredKind: preferredKind)
+        return .homebrew(hbPkg)
+    }
+    if receiptsOnly {
+        let receiptPkg = try PackageResolver().resolve(target: target)
+        return .receipt(receiptPkg)
+    }
+
+    // Unified resolution across Homebrew and .pkg receipts
+    var hbMatch: HomebrewPackageInfo?
+    var hbAmbiguous: SweepError?
+    if HomebrewReader.shared.isAvailable() {
+        do {
+            hbMatch = try HomebrewResolver().resolve(target: target)
+        } catch let err as SweepError {
+            if case .ambiguousPackage = err { hbAmbiguous = err }
+        }
+    }
+
+    var receiptMatch: PackageInfo?
+    var receiptAmbiguous: SweepError?
+    do {
+        receiptMatch = try PackageResolver().resolve(target: target)
+    } catch let err as SweepError {
+        if case .ambiguousPackage = err { receiptAmbiguous = err }
+    }
+
+    if let hb = hbMatch, let rec = receiptMatch {
+        let lower = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hbExact = hb.fullName.lowercased() == lower || hb.name.lowercased() == lower
+        let recExact = rec.packageIdentifier.lowercased() == lower
+
+        if hbExact && !recExact { return .homebrew(hb) }
+        if recExact && !hbExact { return .receipt(rec) }
+
+        throw SweepError.ambiguousPackage(target, [
+            "\(hb.fullName) (Homebrew \(hb.kind.rawValue) — pass --brew)",
+            "\(rec.packageIdentifier) (.pkg receipt — pass --receipts)"
+        ])
+    }
+
+    if let hb = hbMatch {
+        if let recErr = receiptAmbiguous {
+            // Exact Homebrew match wins over vague receipt substring ambiguity
+            let lower = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if hb.fullName.lowercased() == lower || hb.name.lowercased() == lower {
+                return .homebrew(hb)
+            }
+            throw recErr
+        }
+        return .homebrew(hb)
+    }
+
+    if let rec = receiptMatch {
+        if let hbErr = hbAmbiguous {
+            let lower = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if rec.packageIdentifier.lowercased() == lower {
+                return .receipt(rec)
+            }
+            throw hbErr
+        }
+        return .receipt(rec)
+    }
+
+    if let hbErr = hbAmbiguous { throw hbErr }
+    if let recErr = receiptAmbiguous { throw recErr }
+    throw SweepError.packageNotFound(target)
+}
+
 struct PkgScanCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "scan",
-        abstract: "Scan an installed package receipt for owned files, shared files, and leftovers."
+        abstract: "Scan a Homebrew package or .pkg receipt for files, caches, and leftovers."
     )
 
-    @Argument(help: "Package identifier, installer filename, or unique name.")
+    @Argument(help: "Homebrew formula/cask name or .pkg receipt identifier.")
     var target: String
 
-    @Flag(name: .long, help: "Expand collapsed bundles/directories to list every individual installed file.")
+    @Flag(name: [.short, .long], help: "Resolve target as a Homebrew package.")
+    var brew: Bool = false
+
+    @Flag(name: [.short, .long], help: "Resolve target as a macOS .pkg receipt.")
+    var receipts: Bool = false
+
+    @Flag(name: .long, help: "Only match Homebrew formulae.")
+    var formula: Bool = false
+
+    @Flag(name: .long, help: "Only match Homebrew casks.")
+    var cask: Bool = false
+
+    @Flag(name: .long, help: "For .pkg receipts, expand collapsed bundles/directories to list every file.")
     var files: Bool = false
 
     @Flag(name: .long, help: "Output results in JSON format.")
     var json: Bool = false
 
     func run() throws {
-        let resolver = PackageResolver()
-        let pkg = try resolver.resolve(target: target)
+        let resolved = try resolveUnifiedPackage(
+            target: target,
+            brewOnly: brew,
+            receiptsOnly: receipts,
+            formulaOnly: formula,
+            caskOnly: cask
+        )
 
+        switch resolved {
+        case .homebrew(let hbPkg):
+            try BrewCommandHelpers.runScan(for: hbPkg, json: json)
+        case .receipt(let pkg):
+            try runReceiptScan(pkg: pkg)
+        }
+    }
+
+    private func runReceiptScan(pkg: PackageInfo) throws {
         let scanner = PackageScanner()
         let result = try scanner.scan(packageInfo: pkg, expandCollapsedDirectories: files)
 
         if json {
-            let encoder = Formatters.jsonEncoder()
-            let data = try encoder.encode(result)
+            let data = try Formatters.jsonEncoder().encode(result)
             if let output = String(data: data, encoding: .utf8) {
                 print(output)
             }
@@ -205,34 +358,83 @@ struct PkgScanCommand: ParsableCommand {
 struct PkgRemoveCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "remove",
-        abstract: "Safely remove a macOS installer package, its leftovers, and forget its receipt."
+        abstract: "Safely uninstall a Homebrew package or macOS .pkg receipt and clean its leftovers."
     )
 
-    @Argument(help: "Package identifier, installer filename, or unique name.")
+    @Argument(help: "Homebrew formula/cask name or .pkg receipt identifier.")
     var target: String
 
-    @Flag(name: .long, help: "Perform a trial run without moving/deleting files or forgetting the receipt.")
+    @Flag(name: [.short, .long], help: "Resolve target as a Homebrew package.")
+    var brew: Bool = false
+
+    @Flag(name: [.short, .long], help: "Resolve target as a macOS .pkg receipt.")
+    var receipts: Bool = false
+
+    @Flag(name: .long, help: "Only match Homebrew formulae.")
+    var formula: Bool = false
+
+    @Flag(name: .long, help: "Only match Homebrew casks.")
+    var cask: Bool = false
+
+    @Flag(name: .long, help: "Perform a trial run without modifying/deleting files.")
     var dryRun: Bool = false
 
-    @Flag(name: [.short, .long], help: "Skip interactive confirmation and remove all discovered items.")
+    @Flag(name: [.short, .long], help: "Skip interactive confirmation and proceed.")
     var yes: Bool = false
 
-    @Flag(name: .long, help: "Permanently delete files instead of moving user-writable items to the Trash (Caution).")
+    @Flag(name: .long, help: "Permanently delete leftover files instead of moving user-writable items to the Trash.")
     var permanent: Bool = false
 
-    @Flag(name: .long, help: "Include low-confidence runtime leftovers in the removal candidates.")
+    @Flag(name: .long, help: "Include low-confidence runtime leftovers in cleanup candidates.")
     var includeLowConfidence: Bool = false
 
-    @Flag(name: .long, help: "Remove files and leftovers without forgetting the receipt via 'pkgutil --forget'.")
+    @Flag(name: .long, help: "For .pkg receipts, remove files without running 'pkgutil --forget'.")
     var keepReceipt: Bool = false
+
+    @Flag(name: .long, help: "For Homebrew formulae, uninstall even if other packages depend on it.")
+    var ignoreDependencies: Bool = false
+
+    @Flag(name: .long, help: "For Homebrew packages, pass --force to 'brew uninstall'.")
+    var force: Bool = false
+
+    @Flag(name: .long, help: "For Homebrew packages, run 'brew autoremove' afterwards.")
+    var autoremove: Bool = false
+
+    @Flag(name: .long, help: "For Homebrew packages, uninstall via brew without cleaning leftovers/caches.")
+    var noLeftovers: Bool = false
 
     @Flag(name: .long, help: "Output results in JSON format.")
     var json: Bool = false
 
     func run() throws {
-        let resolver = PackageResolver()
-        let pkg = try resolver.resolve(target: target)
+        let resolved = try resolveUnifiedPackage(
+            target: target,
+            brewOnly: brew,
+            receiptsOnly: receipts,
+            formulaOnly: formula,
+            caskOnly: cask
+        )
 
+        switch resolved {
+        case .homebrew(let hbPkg):
+            try BrewCommandHelpers.runRemove(
+                for: hbPkg,
+                dryRun: dryRun,
+                yes: yes,
+                permanent: permanent,
+                includeLowConfidence: includeLowConfidence,
+                ignoreDependencies: ignoreDependencies,
+                force: force,
+                autoremove: autoremove,
+                noLeftovers: noLeftovers,
+                json: json
+            )
+        case .receipt(let pkg):
+            try runReceiptRemove(pkg: pkg)
+        }
+    }
+
+    private func runReceiptRemove(pkg: PackageInfo) throws {
         if pkg.isProtectedSystemPackage || SafetyGuard.isProtectedSystemPackage(packageID: pkg.packageIdentifier) {
             throw SweepError.protectedSystemComponent(
                 "Package '\(pkg.packageIdentifier)' is a protected core macOS system package and cannot be uninstalled."
@@ -249,7 +451,6 @@ struct PkgRemoveCommand: ParsableCommand {
             }
         }
 
-        // Quit any running .app bundles exclusively installed by this package
         let processManager = ProcessManager.shared
         for app in scanResult.discoveredAppBundles {
             if !app.bundleIdentifier.isEmpty, processManager.isAppRunning(bundleIdentifier: app.bundleIdentifier) {
@@ -338,7 +539,6 @@ struct PkgRemoveCommand: ParsableCommand {
             }
         }
 
-        // Authenticate sudo upfront if forgetting receipt or removing privileged files
         let needsSudo = !keepReceipt || plan.hasPrivilegedItems || plan.selectedItems.contains { !PrivilegeHandler.shared.canWrite(to: $0.url) }
         if !dryRun && needsSudo {
             let privilegeHandler = PrivilegeHandler.shared
@@ -363,8 +563,7 @@ struct PkgRemoveCommand: ParsableCommand {
         }
 
         if json {
-            let encoder = Formatters.jsonEncoder()
-            let data = try encoder.encode(result.record)
+            let data = try Formatters.jsonEncoder().encode(result.record)
             if let str = String(data: data, encoding: .utf8) {
                 print(str)
             }

@@ -32,8 +32,38 @@
 .Op Fl y | -yes
 .Op Fl -json
 .Nm
+.Cm brew
+.Cm list
+.Op Fl -formulae | -casks
+.Op Fl -leaves
+.Op Fl -outdated
+.Op Fl f | -filter Ar query
+.Op Fl -json
+.Nm
+.Cm brew
+.Cm scan
+.Ar pkg
+.Op Fl -formula | -cask
+.Op Fl -json
+.Nm
+.Cm brew
+.Cm remove
+.Ar pkg
+.Op Fl -formula | -cask
+.Op Fl -dry-run
+.Op Fl y | -yes
+.Op Fl -permanent
+.Op Fl -include-low-confidence
+.Op Fl -ignore-dependencies
+.Op Fl -force
+.Op Fl -autoremove
+.Op Fl -no-leftovers
+.Op Fl -json
+.Nm
 .Cm pkg
 .Cm list
+.Op Fl b | -brew
+.Op Fl r | -receipts
 .Op Fl a | -all
 .Op Fl f | -filter Ar query
 .Op Fl -json
@@ -41,17 +71,22 @@
 .Cm pkg
 .Cm scan
 .Ar pkg
+.Op Fl b | -brew
+.Op Fl r | -receipts
 .Op Fl -files
 .Op Fl -json
 .Nm
 .Cm pkg
 .Cm remove
 .Ar pkg
+.Op Fl b | -brew
+.Op Fl r | -receipts
 .Op Fl -dry-run
 .Op Fl y | -yes
 .Op Fl -permanent
 .Op Fl -include-low-confidence
 .Op Fl -keep-receipt
+.Op Fl -autoremove
 .Op Fl -json
 .Nm
 .Cm doctor
@@ -125,27 +160,43 @@ caches across all installed applications are cleaned.
 Core system applications (such as Safari and Finder) are permitted for cache purging.
 All cache deletions require administrator authentication
 .Pq Xr sudo 8 .
-.It Cm pkg Cm list Op Fl a | -all Op Fl f | -filter Ar query Op Fl -json
-Lists macOS installer package receipts registered in the system receipt database via
+.It Cm brew Cm list Op Fl -formulae | -casks Op Fl -leaves Op Fl -outdated Op Fl f | -filter Ar query Op Fl -json
+Lists installed Homebrew formulae and casks using
+.Xr brew 1 .
+.It Cm brew Cm scan Ar pkg Op Fl -formula | -cask Op Fl -json
+Scans a Homebrew formula or cask for Cellar/Caskroom disk usage, installed cask artifacts,
+.Ql zap
+stanza paths, application leftovers, Homebrew
+.Pa etc/
+and
+.Pa var/
+data, download caches, reverse dependencies, and orphaned dependencies.
+.Sy This subcommand deletes nothing.
+.It Cm brew Cm remove Ar pkg Op Fl -formula | -cask Op Fl -dry-run Op Fl y | -yes Op Fl -permanent Op Fl -include-low-confidence Op Fl -ignore-dependencies Op Fl -force Op Fl -autoremove Op Fl -no-leftovers Op Fl -json
+Checks reverse dependencies, stops active Homebrew services or running cask apps, runs
+.Ql brew uninstall ,
+removes selected leftover, zap, and download cache items, and optionally prunes orphaned dependencies via
+.Ql brew autoremove .
+.It Cm pkg Cm list Op Fl b | -brew Op Fl r | -receipts Op Fl a | -all Op Fl f | -filter Ar query Op Fl -json
+Lists installed Homebrew packages and macOS installer package receipts registered via
 .Xr pkgutil 1 .
-By default, Apple packages
+Use
+.Fl -brew
+or
+.Fl -receipts
+to limit output to a single source. By default, Apple receipts
 .Pq Qq com.apple.*
 are omitted unless
 .Fl -all
 is specified.
-.It Cm pkg Cm scan Ar pkg Op Fl -files Op Fl -json
-Resolves a package identifier, installer filename, or unique name, inspects its receipt BOM via
-.Xr pkgutil 1 ,
-checks cross-package shared file ownership, collapses exclusive bundles/directories (unless
-.Fl -files
-is passed), and scans associated runtime leftovers.
+.It Cm pkg Cm scan Ar pkg Op Fl b | -brew Op Fl r | -receipts Op Fl -files Op Fl -json
+Resolves either a Homebrew package or a macOS installer package receipt and scans all installed files, shared files, caches, and associated leftovers.
 .Sy This subcommand deletes nothing.
-.It Cm pkg Cm remove Ar pkg Op Fl -dry-run Op Fl y | -yes Op Fl -permanent Op Fl -include-low-confidence Op Fl -keep-receipt Op Fl -json
-Safely uninstalls an installer package by removing exclusive package files and associated leftovers (preserving any files shared with other packages), unloading related LaunchAgents or LaunchDaemons, pruning empty package directories, and forgetting the receipt with
-.Ql pkgutil --forget
-unless
-.Fl -keep-receipt
-is passed.
+.It Cm pkg Cm remove Ar pkg Op Fl b | -brew Op Fl r | -receipts Op Fl -dry-run Op Fl y | -yes Op Fl -permanent Op Fl -include-low-confidence Op Fl -keep-receipt Op Fl -autoremove Op Fl -json
+Uninstalls either a Homebrew package (with leftover/cache cleanup) or a macOS
+.Pa .pkg
+receipt (with shared-file protection and
+.Ql pkgutil --forget ) .
 .It Cm doctor
 Runs diagnostic checks verifying Full Disk Access (FDA), macOS version
 compatibility (macOS 13.0+ required), User Trash permissions, System

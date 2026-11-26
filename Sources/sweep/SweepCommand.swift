@@ -14,16 +14,20 @@ public struct SweepCommand: ParsableCommand {
           sweep scan <app>            Inspect leftovers without deleting
           sweep remove <app>          Uninstall an application and its leftovers
           sweep remove cache <app>    Purge cache files for an app (e.g. Safari) or 'all'
-          sweep pkg list              List installed .pkg package receipts
-          sweep pkg scan <pkg>        Inspect files & leftovers for a .pkg receipt
-          sweep pkg remove <pkg>      Uninstall a .pkg package and forget its receipt
+          sweep brew list             List installed Homebrew formulae and casks
+          sweep brew scan <pkg>       Inspect Homebrew package files, zap paths & caches
+          sweep brew remove <pkg>     Uninstall a Homebrew package and its leftovers
+          sweep pkg list              List all packages (Homebrew + .pkg receipts)
+          sweep pkg scan <pkg>        Inspect files & leftovers for a package
+          sweep pkg remove <pkg>      Uninstall a Homebrew package or .pkg receipt
           sweep doctor                Check system permissions and health
         """,
-        version: "sweep 1.1.0",
+        version: "sweep 1.2.0",
         subcommands: [
             ListCommand.self,
             ScanCommand.self,
             RemoveCommand.self,
+            BrewCommand.self,
             PkgCommand.self,
             DoctorCommand.self
         ]

@@ -78,7 +78,7 @@ public final class SafetyGuard {
         "Utilities"
     ]
 
-    /// Structural directories under /usr/local and /opt that must NEVER be deleted as a whole
+    /// Structural directories under /usr/local, /opt/homebrew, and /opt that must NEVER be deleted as a whole
     public static let protectedPackageRootSubdirs: Set<String> = [
         "local",
         "bin",
@@ -96,7 +96,8 @@ public final class SafetyGuard {
         "Cellar",
         "Caskroom",
         "Homebrew",
-        "homebrew"
+        "homebrew",
+        "Frameworks"
     ]
 
     /// Apple essential core system apps that can NEVER be deleted
@@ -197,7 +198,9 @@ public final class SafetyGuard {
 
         if Self.protectedPackageRootSubdirs.contains(lastComponent) {
             if (parent == "local" && grandParent == "usr") ||
-               (parent == "share" && grandParent == "local") ||
+               (parent == "homebrew" && grandParent == "opt") ||
+               (parent == "local" && grandParent == "opt") ||
+               (parent == "share" && (grandParent == "local" || grandParent == "homebrew")) ||
                parent == "opt" ||
                (parent == "/" && (lastComponent == "opt" || lastComponent == "usr")) {
                 throw SweepError.protectedSystemComponent("Cannot delete package structural root folder: '\(rawPath)'.")
@@ -205,6 +208,14 @@ public final class SafetyGuard {
         }
         if parent == "man" && grandParent == "share" && lastComponent.hasPrefix("man") {
             throw SweepError.protectedSystemComponent("Cannot delete manual section directory: '\(rawPath)'.")
+        }
+        if (parent == "Caches" && lastComponent == "Homebrew") ||
+           (parent == "Homebrew" && ["downloads", "Cask", "api", "bootsnap"].contains(lastComponent)) {
+            throw SweepError.protectedSystemComponent("Cannot delete Homebrew cache root directory: '\(rawPath)'.")
+        }
+        let homeStdPath = fileManager.homeDirectoryForCurrentUser.standardized.path
+        if lastComponent == ".config" && (parentURL.standardized.path == homeStdPath || parent == "Users" || grandParent == "Users" || parent.hasSuffix("Home")) {
+            throw SweepError.protectedSystemComponent("Cannot delete user config root directory: '\(rawPath)'.")
         }
 
         // Check 4: Symlink traversal & canonical path resolution

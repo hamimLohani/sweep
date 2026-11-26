@@ -39,6 +39,9 @@ public final class Doctor {
         // 5. History Manifest Directory Access
         checks.append(checkConfigDirectory())
 
+        // 6. Homebrew Package Manager Integration
+        checks.append(checkHomebrew())
+
         return checks
     }
 
@@ -169,6 +172,24 @@ public final class Doctor {
                 passed: false,
                 message: "Cannot write to ~/.config/sweep.",
                 remediation: "Check permissions for ~/.config/sweep: mkdir -p ~/.config/sweep && chmod 755 ~/.config/sweep"
+            )
+        }
+    }
+
+    private func checkHomebrew() -> DiagnosticCheck {
+        let reader = HomebrewReader.shared
+        if let version = reader.brewVersion() {
+            let prefix = reader.brewPrefix()
+            return DiagnosticCheck(
+                name: "Homebrew Integration",
+                passed: true,
+                message: "\(version) detected at \(prefix). 'sweep brew' and 'sweep pkg' ready."
+            )
+        } else {
+            return DiagnosticCheck(
+                name: "Homebrew Integration",
+                passed: true,
+                message: "Homebrew not detected (optional — required only for 'sweep brew')."
             )
         }
     }

@@ -670,5 +670,264 @@ do {
     fail("PackageRemoverTests", "\(error)")
 }
 
+// MARK: - Homebrew Test Doubles
+final class StubHomebrewReader: HomebrewReading {
+    var available: Bool = true
+    var prefix: String = "/opt/homebrew"
+    var cacheDir: URL?
+    var packages: [HomebrewPackageInfo] = []
+    var services: [String: HomebrewServiceStatus] = [:]
+    var stoppedServices: [String] = []
+    var uninstalledPackages: [String] = []
+    var autoremoveRuns: [Bool] = []
+
+    func isAvailable() -> Bool { available }
+    func brewExecutablePath() -> String? { available ? "\(prefix)/bin/brew" : nil }
+    func brewPrefix() -> String { prefix }
+    func cacheDirectory() -> URL? { cacheDir }
+    func brewVersion() -> String? { available ? "Homebrew 7.0.16" : nil }
+    func installedPackages() throws -> [HomebrewPackageInfo] {
+        if !available { throw SweepError.general("brew not installed") }
+        return packages
+    }
+    func runningServices() -> [String: HomebrewServiceStatus] { services }
+    func stopService(_ name: String) throws { stoppedServices.append(name) }
+    func uninstall(package: HomebrewPackageInfo, ignoreDependencies: Bool, force: Bool) throws -> String {
+        uninstalledPackages.append(package.fullName)
+        return "Uninstalling \(package.fullName)..."
+    }
+    func autoremove(dryRun: Bool) throws -> String {
+        autoremoveRuns.append(dryRun)
+        return "Would autoremove: dep-orphan"
+    }
+}
+
+// Suite 9: HomebrewSafetyGuardTests
+print("\n\u{001B}[1;34m▶ Suite: HomebrewSafetyGuardTests\u{001B}[0m")
+do {
+    let realGuard = SafetyGuard()
+    let blockedBrewRoots = [
+        "/opt/homebrew",
+        "/opt/homebrew/bin",
+        "/opt/homebrew/lib",
+        "/opt/homebrew/etc",
+        "/opt/homebrew/var",
+        "/opt/homebrew/Cellar",
+        "/opt/homebrew/Caskroom",
+        "/opt/homebrew/share/man",
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config").path,
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Homebrew").path,
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Homebrew/downloads").path
+    ]
+    for path in blockedBrewRoots {
+        assertThrows({ try realGuard.validate(itemURL: URL(fileURLWithPath: path)) }, "SafetyGuard rejects Homebrew root \(path)")
+    }
+
+    let allowedBrewItems = [
+        "/opt/homebrew/Cellar/bat/0.26.1",
+        "/opt/homebrew/etc/nginx",
+        "/opt/homebrew/var/postgres",
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/neovide").path,
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Homebrew/bat--0.26.1").path
+    ]
+    for path in allowedBrewItems {
+        do {
+            try realGuard.validate(itemURL: URL(fileURLWithPath: path))
+            pass("SafetyGuard accepts valid Homebrew item \(path)")
+        } catch {
+            fail("SafetyGuard Homebrew item \(path)", "\(error)")
+        }
+    }
+}
+
+// Suite 10: HomebrewResolverTests
+print("\n\u{001B}[1;34m▶ Suite: HomebrewResolverTests\u{001B}[0m")
+do {
+    let stub = StubHomebrewReader()
+    stub.packages = [
+        HomebrewPackageInfo(name: "bat", fullName: "bat", kind: .formula, version: "0.26.1", installedOnRequest: true, requiredBy: []),
+        HomebrewPackageInfo(name: "abseil", fullName: "abseil", kind: .formula, version: "20260817.0", installedOnRequest: false, requiredBy: ["node"]),
+        HomebrewPackageInfo(name: "sweep", fullName: "hamimlohani/tap/sweep", kind: .formula, tap: "hamimlohani/tap", version: "1.1.0", installedOnRequest: true),
+        HomebrewPackageInfo(name: "neovide-app", fullName: "neovide-app", kind: .cask, tap: "homebrew/cask", version: "0.15.2", isOutdated: true, oldNames: ["neovide"], displayNames: ["Neovide"]),
+        HomebrewPackageInfo(name: "wireshark", fullName: "wireshark", kind: .formula, version: "4.6.3"),
+        HomebrewPackageInfo(name: "wireshark", fullName: "wireshark", kind: .cask, tap: "homebrew/cask", version: "4.6.3")
+    ]
+
+    let resolver = HomebrewResolver(reader: stub)
+    assert(try resolver.listInstalledPackages().count == 6, "Lists all formulae and casks")
+    assert(try resolver.listInstalledPackages(kind: .cask).count == 2, "Filters casks only")
+    assert(try resolver.listInstalledPackages(leavesOnly: true).contains { $0.name == "bat" } &&
+           !(try resolver.listInstalledPackages(leavesOnly: true).contains { $0.name == "abseil" }), "Leaves filter excludes dependency formula")
+    assert(try resolver.listInstalledPackages(outdatedOnly: true).map { $0.name } == ["neovide-app"], "Outdated filter finds outdated cask")
+
+    assert(try resolver.resolve(target: "hamimlohani/tap/sweep").name == "sweep", "Resolves formula by full tap name")
+    assert(try resolver.resolve(target: "neovide").name == "neovide-app", "Resolves cask by old token")
+    assert(try resolver.resolve(target: "Neovide").name == "neovide-app", "Resolves cask by display name")
+    assertThrows({ try resolver.resolve(target: "wireshark") }, "Ambiguous formula+cask name throws without kind flag")
+    assert(try resolver.resolve(target: "wireshark", preferredKind: .cask).kind == .cask, "Disambiguates with preferredKind = .cask")
+    assertThrows({ try resolver.resolve(target: "nonexistent-brew-pkg") }, "Unknown brew package throws packageNotFound")
+} catch {
+    fail("HomebrewResolverTests", "\(error)")
+}
+
+// Suite 11: HomebrewScannerTests & HomebrewRemoverTests
+print("\n\u{001B}[1;34m▶ Suite: HomebrewScannerAndRemoverTests\u{001B}[0m")
+do {
+    let sandbox = try TestSandbox()
+    defer { sandbox.cleanUp() }
+
+    let fm = FileManager.default
+    let prefixDir = sandbox.rootURL.appendingPathComponent("opt/homebrew")
+    let cellarPkg = prefixDir.appendingPathComponent("Cellar/demo/1.2.3")
+    let etcPkg = prefixDir.appendingPathComponent("etc/demo")
+    let varPkg = prefixDir.appendingPathComponent("var/demo")
+    let cacheRoot = sandbox.userLibraryURL.appendingPathComponent("Caches/Homebrew")
+    let downloadsDir = cacheRoot.appendingPathComponent("downloads")
+    let xdgDemo = sandbox.userHomeURL.appendingPathComponent(".config/demo")
+    let historyURL = sandbox.rootURL.appendingPathComponent("brew_history.json")
+
+    try fm.createDirectory(at: cellarPkg, withIntermediateDirectories: true)
+    try fm.createDirectory(at: etcPkg, withIntermediateDirectories: true)
+    try fm.createDirectory(at: varPkg, withIntermediateDirectories: true)
+    try fm.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
+    try fm.createDirectory(at: xdgDemo, withIntermediateDirectories: true)
+
+    try "binary-payload".write(to: cellarPkg.appendingPathComponent("demo"), atomically: true, encoding: .utf8)
+    try "cfg".write(to: etcPkg.appendingPathComponent("demo.conf"), atomically: true, encoding: .utf8)
+    try "state".write(to: varPkg.appendingPathComponent("demo.db"), atomically: true, encoding: .utf8)
+    try "xdg".write(to: xdgDemo.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+
+    let bottleBlob = downloadsDir.appendingPathComponent("abc123--demo--1.2.3.bottle.tar.gz")
+    try "bottle-bytes".write(to: bottleBlob, atomically: true, encoding: .utf8)
+    let cacheSymlink = cacheRoot.appendingPathComponent("demo--1.2.3")
+    try fm.createSymbolicLink(at: cacheSymlink, withDestinationURL: bottleBlob)
+
+    // Unrelated formula starting with similar prefix must NOT match download cache!
+    let otherSymlink = cacheRoot.appendingPathComponent("demo-extra--1.0")
+    try "keep-me".write(to: otherSymlink, atomically: true, encoding: .utf8)
+
+    let demoPkg = HomebrewPackageInfo(
+        name: "demo",
+        fullName: "demo",
+        kind: .formula,
+        version: "1.2.3",
+        prefixPath: prefixDir.path,
+        cellarOrCaskroomURL: cellarPkg,
+        installedOnRequest: true,
+        runtimeDependencies: ["orphan-lib"],
+        serviceName: "demo",
+        serviceRunning: true
+    )
+    let orphanDep = HomebrewPackageInfo(
+        name: "orphan-lib",
+        fullName: "orphan-lib",
+        kind: .formula,
+        version: "0.9.0",
+        prefixPath: prefixDir.path,
+        installedOnRequest: false,
+        requiredBy: ["demo"]
+    )
+    let requiredPkg = HomebrewPackageInfo(
+        name: "core-lib",
+        fullName: "core-lib",
+        kind: .formula,
+        version: "2.0.0",
+        prefixPath: prefixDir.path,
+        requiredBy: ["other-app"]
+    )
+
+    // Cask with app bundle + zap glob
+    let caskAppURL = try sandbox.createDummyApp(bundleName: "DemoCaskApp", bundleIdentifier: "com.example.democask")
+    let caskPref = sandbox.userLibraryURL.appendingPathComponent("Preferences/com.example.democask.plist")
+    let caskZapFile = sandbox.userLibraryURL.appendingPathComponent("Application Support/democask-zap-extra.dat")
+    try "plist".write(to: caskPref, atomically: true, encoding: .utf8)
+    try "zap".write(to: caskZapFile, atomically: true, encoding: .utf8)
+
+    let caskPkg = HomebrewPackageInfo(
+        name: "demo-cask",
+        fullName: "demo-cask",
+        kind: .cask,
+        tap: "homebrew/cask",
+        version: "1.0.0",
+        prefixPath: prefixDir.path,
+        artifactAppPaths: [caskAppURL.path],
+        zapTrashPaths: ["~/Library/Application Support/democask-*.dat"]
+    )
+
+    let stub = StubHomebrewReader()
+    stub.prefix = prefixDir.path
+    stub.cacheDir = cacheRoot
+    stub.packages = [demoPkg, orphanDep, requiredPkg, caskPkg]
+
+    let guardInstance = SafetyGuard(customAllowedRoot: sandbox.rootURL)
+    let scanner = HomebrewScanner(
+        fileManager: fm,
+        reader: stub,
+        safetyGuard: guardInstance,
+        privilegeHandler: StubPrivilegeHandler(),
+        customHomeDirectory: sandbox.userHomeURL
+    )
+
+    let scanRes = try scanner.scan(packageInfo: demoPkg)
+    assert(scanRes.cellarSizeBytes > 0, "HomebrewScanner computes Cellar size")
+    assert(scanRes.cleanupItems.contains { $0.url.standardized.path == etcPkg.standardized.path }, "Detects Homebrew etc config directory")
+    assert(scanRes.cleanupItems.contains { $0.url.standardized.path == varPkg.standardized.path }, "Detects Homebrew var data directory")
+    assert(scanRes.cleanupItems.contains { $0.url.standardized.path == xdgDemo.standardized.path }, "Detects ~/.config formula directory")
+    assert(scanRes.cleanupItems.contains { $0.url.standardized.path == cacheSymlink.standardized.path }, "Detects Homebrew cache symlink")
+    assert(scanRes.cleanupItems.contains { $0.url.standardized.path == bottleBlob.standardized.path }, "Detects backing Homebrew download blob")
+    assert(!scanRes.cleanupItems.contains { $0.url.standardized.path == otherSymlink.standardized.path }, "Does not false-match sibling formula cache 'demo-extra'")
+    assert(scanRes.orphanedDependencies == ["orphan-lib"], "Computes orphaned dependency candidates")
+
+    let caskScan = try scanner.scan(packageInfo: caskPkg)
+    assert(caskScan.artifactItems.count == 1, "Detects cask .app bundle artifact")
+    assert(caskScan.cleanupItems.contains { $0.url.lastPathComponent == "com.example.democask.plist" }, "Detects cask .app runtime preferences")
+    assert(caskScan.cleanupItems.contains { $0.url.lastPathComponent == "democask-zap-extra.dat" }, "Expands cask zap glob safely")
+
+    let remover = HomebrewRemover(
+        fileManager: fm,
+        reader: stub,
+        safetyGuard: guardInstance,
+        historyLogger: HistoryLogger(fileManager: fm, customManifestURL: historyURL),
+        privilegeHandler: StubPrivilegeHandler()
+    )
+
+    // Dependent formula refusal without --ignore-dependencies
+    let blockedPlan = HomebrewRemovalPlan(packageInfo: requiredPkg, selectedCleanupItems: [])
+    assertThrows({ try remover.execute(plan: blockedPlan) }, "HomebrewRemover refuses removing formula required by other packages")
+
+    // Dry-run leaves everything intact
+    let dryPlan = HomebrewRemovalPlan(
+        packageInfo: demoPkg,
+        selectedCleanupItems: scanRes.cleanupItems,
+        isPermanent: true,
+        dryRun: true,
+        autoremove: true,
+        cellarSizeBytes: scanRes.cellarSizeBytes
+    )
+    let dryOut = try remover.execute(plan: dryPlan)
+    assert(dryOut.isCompleteSuccess && stub.uninstalledPackages.isEmpty && stub.stoppedServices.isEmpty, "Dry-run does not execute brew uninstall or stop service")
+    assert(fm.fileExists(atPath: etcPkg.path) && fm.fileExists(atPath: bottleBlob.path), "Dry-run preserves all leftover files")
+
+    // Real removal stops service, uninstalls, cleans leftovers, runs autoremove, logs history
+    let execPlan = HomebrewRemovalPlan(
+        packageInfo: demoPkg,
+        selectedCleanupItems: scanRes.cleanupItems,
+        isPermanent: true,
+        dryRun: false,
+        autoremove: true,
+        cellarSizeBytes: scanRes.cellarSizeBytes
+    )
+    let execOut = try remover.execute(plan: execPlan)
+    assert(execOut.isCompleteSuccess, "HomebrewRemover executes cleanly")
+    assert(execOut.serviceStopped && stub.stoppedServices == ["demo"], "Stops running Homebrew service")
+    assert(stub.uninstalledPackages == ["demo"], "Calls brew uninstall")
+    assert(execOut.autoremoveExecuted && stub.autoremoveRuns.contains(false), "Runs brew autoremove")
+    assert(!fm.fileExists(atPath: etcPkg.path) && !fm.fileExists(atPath: varPkg.path) && !fm.fileExists(atPath: bottleBlob.path), "Cleans selected config, var, and download cache")
+    assert(fm.fileExists(atPath: otherSymlink.path), "Preserves unrelated formula cache")
+    assert(HistoryLogger(fileManager: fm, customManifestURL: historyURL).loadHistory().count == 1, "Records Homebrew uninstall in audit history")
+} catch {
+    fail("HomebrewScannerAndRemoverTests", "\(error)")
+}
+
 print("\n\u{001B}[1;32m🎉 All Unit Tests Passed Successfully!\u{001B}[0m\n")
 

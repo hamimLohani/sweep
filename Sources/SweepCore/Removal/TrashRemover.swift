@@ -168,6 +168,31 @@ public final class TrashRemover {
         )
     }
 
+    /// Removes a list of `LeftoverItem` entries using TrashRemover's safety guards and trash/privilege handling.
+    public func executeItems(
+        _ items: [LeftoverItem],
+        appInfo: AppInfo? = nil,
+        isPermanent: Bool = false,
+        dryRun: Bool = false,
+        onItemWillDelete: ((URL, String) -> Void)? = nil
+    ) -> (successful: [RemovalItemResult], failed: [RemovalItemResult], records: [RemovalItemRecord]) {
+        let targets = items.map { item in
+            Target(
+                url: item.url,
+                category: item.category,
+                sizeBytes: item.sizeBytes,
+                requiresPrivilege: item.requiresPrivilege
+            )
+        }
+        return executeTargets(
+            targets,
+            appInfo: appInfo,
+            isPermanent: isPermanent,
+            dryRun: dryRun,
+            onItemWillDelete: onItemWillDelete
+        )
+    }
+
     // MARK: - Shared Removal Execution
 
     private func executeTargets(
